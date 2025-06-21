@@ -1,3 +1,5 @@
+# keruta-agent バイナリリリース設定
+# この設定は実行バイナリのみをリリースします
 project_name: keruta-agent
 
 builds:
@@ -13,10 +15,15 @@ builds:
     env:
       - CGO_ENABLED=0
 
+# アーカイブを作成せず、バイナリのみをリリースに添付する
+archives:
+  - format: binary
+
 checksum:
   name_template: "checksums.txt"
 
 snapshot:
   name_template: "{{ .Tag }}-next"
 
+# Dockerイメージは作成しない（バイナリのみ）
 dockers: [] 

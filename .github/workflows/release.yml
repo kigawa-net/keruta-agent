@@ -1,4 +1,4 @@
-name: Release
+name: Release Binary
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   release:
-    name: Build and Release
+    name: Build and Release Binary
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -24,7 +24,7 @@ jobs:
       - name: Set up QEMU (for cross-build)
         uses: docker/setup-qemu-action@v3
 
-      - name: Set up GoReleaser
+      - name: Build and Release Binary
         uses: goreleaser/goreleaser-action@v5
         with:
           version: latest
@@ -32,4 +32,5 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GIT_TOKEN }}
 
-# GoReleaser用の設定ファイルも必要です。 
+# GoReleaser設定ファイル (.goreleaser.yml) でバイナリビルドのみが設定されています
+# このワークフローは実行バイナリのみをリリースします 
