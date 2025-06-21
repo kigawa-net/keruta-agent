@@ -1,0 +1,37 @@
+project_name: keruta-agent
+release:
+  draft: false
+  prerelease: false
+  changelog:
+    use: github
+builds:
+  - id: keruta-agent
+    main: ./cmd/keruta-agent
+    goos:
+      - linux
+      - windows
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+    env:
+      - CGO_ENABLED=0
+    binary: keruta-agent
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - "!**/*.go"
+      - "!**/test*"
+      - "!**/tests*"
+      - "!**/.git*"
+      - "!**/.github*"
+      - "!**/scripts*"
+checksum:
+  name_template: "checksums.txt"
+snapshot:
+  name_template: "{{ .Tag }}-next"
