@@ -10,8 +10,6 @@ import (
 	"keruta-agent/internal/api"
 	"keruta-agent/internal/config"
 	"keruta-agent/internal/logger"
-
-	"github.com/sirupsen/logrus"
 )
 
 // Checker はヘルスチェックを担当します

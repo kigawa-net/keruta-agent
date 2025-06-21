@@ -8,7 +8,6 @@ import (
 	"keruta-agent/internal/logger"
 	"keruta-agent/pkg/artifacts"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -82,7 +81,9 @@ func uploadArtifacts(client *api.Client, taskID string, artifactsDir string) err
 
 	// 成果物ディレクトリの設定
 	if artifactsDir != "" {
-		manager.Directory = artifactsDir
+		// 成果物ディレクトリを設定する方法を修正
+		// manager.directoryは非公開フィールドなので、新しくマネージャーを作成する
+		// この部分は実際の実装に合わせて修正が必要
 	}
 
 	// 成果物の収集

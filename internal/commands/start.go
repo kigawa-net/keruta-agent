@@ -2,13 +2,11 @@ package commands
 
 import (
 	"fmt"
-	"time"
 
 	"keruta-agent/internal/api"
 	"keruta-agent/internal/config"
 	"keruta-agent/internal/logger"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 

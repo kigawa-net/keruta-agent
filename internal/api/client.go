@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"keruta-agent/internal/config"
 	"keruta-agent/internal/logger"

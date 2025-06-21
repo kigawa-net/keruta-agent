@@ -3,11 +3,11 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"keruta-agent/internal/logger"
 	"keruta-agent/pkg/health"
 
-	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +46,7 @@ func runHealth() error {
 		result := checker.CheckSpecific(healthCheckType)
 		status = &health.HealthStatus{
 			Overall:   result.Status,
-			Timestamp: result.Timestamp,
+			Timestamp: time.Now(),
 			Checks: map[string]health.CheckResult{
 				healthCheckType: result,
 			},
