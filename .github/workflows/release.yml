@@ -28,12 +28,7 @@ jobs:
         uses: goreleaser/goreleaser-action@v5
         with:
           version: latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Run GoReleaser
-        run: |
-          goreleaser release --clean --skip-validate
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
