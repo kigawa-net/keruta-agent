@@ -23,8 +23,4 @@ checksum:
 snapshot:
   name_template: "{{ .Tag }}-next"
 
-signs:
-  - artifacts: checksum
-    args: ["--armor", "--detach-sign"]
-
 dockers: [] 
