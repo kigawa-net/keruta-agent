@@ -1,7 +1,7 @@
 project_name: keruta-agent
 
 builds:
-  - main: ./keruta-agent/cmd/keruta-agent
+  - main: ./cmd/keruta-agent
     binary: keruta-agent
     goos:
       - linux
