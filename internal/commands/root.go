@@ -47,6 +47,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&taskID, "task-id", "", "タスクID（環境変数KERUTA_TASK_IDから自動取得）")
 
 	// サブコマンドの追加
+	rootCmd.AddCommand(executeCmd)
 	rootCmd.AddCommand(startCmd)
 	rootCmd.AddCommand(successCmd)
 	rootCmd.AddCommand(failCmd)
@@ -62,7 +63,10 @@ func init() {
 {{end}}{{if or .Runnable .HasSubCommands}}{{.UsageString}}{{end}}`)
 
 	// 使用例の設定
-	rootCmd.Example = `  # タスクの開始
+	rootCmd.Example = `  # スクリプトの実行
+  keruta execute --task-id task123
+
+  # タスクの開始
   keruta start
 
   # 進捗の報告
@@ -79,4 +83,4 @@ func init() {
 
   # ヘルスチェック
   keruta health`
-} 
+}
