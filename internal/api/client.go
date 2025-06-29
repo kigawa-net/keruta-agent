@@ -113,7 +113,7 @@ func (c *Client) GetWebSocketClient(taskID string) (*WebSocketClient, error) {
 // UpdateTaskStatus はタスクのステータスを更新します
 func (c *Client) UpdateTaskStatus(taskID string, status TaskStatus, message string, progress int, errorCode string) error {
 	// HTTP APIでステータス更新
-	url := fmt.Sprintf("%s/api/tasks/%s/status", c.baseURL, taskID)
+	url := fmt.Sprintf("%s/api/v1/tasks/%s/status", c.baseURL, taskID)
 
 	reqBody := TaskUpdateRequest{
 		Status:    status,
@@ -164,7 +164,7 @@ func (c *Client) UpdateTaskStatus(taskID string, status TaskStatus, message stri
 // SendLog はログを送信します
 func (c *Client) SendLog(taskID string, level string, message string) error {
 	// HTTP APIでログ送信
-	url := fmt.Sprintf("%s/api/tasks/%s/logs", c.baseURL, taskID)
+	url := fmt.Sprintf("%s/api/v1/tasks/%s/logs", c.baseURL, taskID)
 
 	reqBody := LogRequest{
 		Level:   level,
@@ -210,7 +210,7 @@ func (c *Client) SendLog(taskID string, level string, message string) error {
 
 // UploadArtifact は成果物をアップロードします
 func (c *Client) UploadArtifact(taskID string, filePath string, description string) error {
-	url := fmt.Sprintf("%s/api/tasks/%s/artifacts", c.baseURL, taskID)
+	url := fmt.Sprintf("%s/api/v1/tasks/%s/artifacts", c.baseURL, taskID)
 
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -305,7 +305,7 @@ func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
 
 // GetScript はタスクのスクリプトを取得します
 func (c *Client) GetScript(taskID string) (*Script, error) {
-	url := fmt.Sprintf("%s/api/tasks/%s/script", c.baseURL, taskID)
+	url := fmt.Sprintf("%s/api/v1/tasks/%s/script", c.baseURL, taskID)
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
@@ -330,7 +330,7 @@ func (c *Client) GetScript(taskID string) (*Script, error) {
 
 	var scriptResp ScriptResponse
 	if err := json.NewDecoder(resp.Body).Decode(&scriptResp); err != nil {
-		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w, %s/api/tasks/%s/script", err, c.baseURL, taskID)
+		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w, %s/api/v1/tasks/%s/script", err, c.baseURL, taskID)
 	}
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
@@ -344,7 +344,7 @@ func (c *Client) GetScript(taskID string) (*Script, error) {
 
 // CreateAutoFixTask は自動修正タスクを作成します
 func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode string) error {
-	url := fmt.Sprintf("%s/api/tasks/%s/auto-fix", c.baseURL, taskID)
+	url := fmt.Sprintf("%s/api/v1/tasks/%s/auto-fix", c.baseURL, taskID)
 
 	reqBody := map[string]string{
 		"errorMessage": errorMessage,
