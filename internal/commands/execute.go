@@ -1,8 +1,14 @@
 package commands
 
 import (
+	"bufio"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"syscall"
+	"time"
 
 	"keruta-agent/internal/api"
 	"keruta-agent/internal/config"
@@ -75,12 +81,77 @@ func runExecute() error {
 	setLogLevel(logLevel)
 
 	// 作業ディレクトリの作成
+	if err := createWorkDir(workDir); err != nil {
+		return err
+	}
+
+	// タスクステータスをPROCESSINGに更新
+	if err := updateTaskStatusProcessing(client, taskID); err != nil {
+		return err
+	}
+
+	// 1. APIからスクリプトを取得
+	script, err := retrieveScript(client, taskID)
+	if err != nil {
+		return err
+	}
+
+	// 2. スクリプトをファイルに保存
+	scriptPath, err := saveScriptToFile(script, workDir)
+	if err != nil {
+		updateTaskStatusFailed(client, taskID, "スクリプトファイルの作成に失敗しました", "SCRIPT_WRITE_ERROR")
+		return err
+	}
+
+	// 3. サブプロセスとして実行
+	cmd := setupCommand(scriptPath, workDir, script.Parameters)
+
+	// 4. 標準出力・標準エラー出力をキャプチャ
+	stdout, stderr, stdin, err := setupIOPipes(cmd)
+	if err != nil {
+		updateTaskStatusFailed(client, taskID, err.Error(), "PIPE_ERROR")
+		return err
+	}
+
+	// 5. サブプロセスの開始
+	if err := startCommand(cmd); err != nil {
+		updateTaskStatusFailed(client, taskID, "スクリプトの実行開始に失敗しました", "EXECUTION_ERROR")
+		return err
+	}
+
+	// 6. 標準出力・標準エラー出力の処理
+	processOutputs(client, taskID, stdout, stderr, stdin)
+
+	// 7. サブプロセスの終了を待機
+	exitErr := waitForCommand(cmd, timeout)
+
+	// 8. サブプロセスの終了状態に応じてタスク状態を更新
+	if exitErr != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(exitErr).Error("スクリプトの実行に失敗しました")
+		updateTaskStatusFailed(client, taskID, "スクリプトの実行に失敗しました", "EXECUTION_ERROR")
+		return fmt.Errorf("スクリプトの実行に失敗: %w", exitErr)
+	}
+
+	// 実行完了後、タスクステータスをCOMPLETEDに更新
+	if err := updateTaskStatusCompleted(client, taskID); err != nil {
+		return err
+	}
+
+	logger.WithTaskIDAndComponent("execute").Info("タスク実行が完了しました")
+	return nil
+}
+
+// createWorkDir は作業ディレクトリを作成します
+func createWorkDir(workDir string) error {
 	if err := os.MkdirAll(workDir, 0755); err != nil {
 		logger.WithTaskIDAndComponent("execute").WithError(err).Error("作業ディレクトリの作成に失敗しました")
 		return fmt.Errorf("作業ディレクトリの作成に失敗: %w", err)
 	}
+	return nil
+}
 
-	// タスクステータスをPROCESSINGに更新
+// updateTaskStatusProcessing はタスクステータスをPROCESSINGに更新します
+func updateTaskStatusProcessing(client *api.Client, taskID string) error {
 	err := client.UpdateTaskStatus(
 		taskID,
 		api.TaskStatusProcessing,
@@ -92,22 +163,44 @@ func runExecute() error {
 		logger.WithTaskIDAndComponent("execute").WithError(err).Error("タスクステータスの更新に失敗しました")
 		return fmt.Errorf("タスクステータスの更新に失敗: %w", err)
 	}
+	return nil
+}
 
-	// スクリプトの取得とサブプロセスの実行は実際の実装では以下のようなステップが必要
-	// 1. APIからスクリプトを取得
-	// 2. WebSocketで接続
-	// 3. スクリプトをファイルに保存
-	// 4. サブプロセスとして実行
-	// 5. 標準出力・標準エラー出力をキャプチャしてWebSocketで送信
-	// 6. 入力待ち状態を検出してタスク状態を更新
-	// 7. WebSocketから標準入力を受信してサブプロセスに送信
-	// 8. サブプロセスの終了状態に応じてタスク状態を更新
+// updateTaskStatusWaitingForInput はタスクステータスをWAITING_FOR_INPUTに更新します
+func updateTaskStatusWaitingForInput(client *api.Client, taskID string) error {
+	err := client.UpdateTaskStatus(
+		taskID,
+		api.TaskStatusWaitingForInput,
+		"ユーザー入力を待機中",
+		50,
+		"",
+	)
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("入力待ち状態への更新に失敗しました")
+		return fmt.Errorf("入力待ち状態への更新に失敗: %w", err)
+	}
+	return nil
+}
 
-	// この実装ではプレースホルダーとして簡易的な処理を行います
-	logger.WithTaskIDAndComponent("execute").Info("スクリプトの実行を開始します")
+// updateTaskStatusResumeProcessing はタスクステータスを入力受付後にPROCESSINGに戻します
+func updateTaskStatusResumeProcessing(client *api.Client, taskID string) error {
+	err := client.UpdateTaskStatus(
+		taskID,
+		api.TaskStatusProcessing,
+		"処理を再開しました",
+		60,
+		"",
+	)
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("処理中状態への更新に失敗しました")
+		return fmt.Errorf("処理中状態への更新に失敗: %w", err)
+	}
+	return nil
+}
 
-	// 実行完了後、タスクステータスをCOMPLETEDに更新
-	err = client.UpdateTaskStatus(
+// updateTaskStatusCompleted はタスクステータスをCOMPLETEDに更新します
+func updateTaskStatusCompleted(client *api.Client, taskID string) error {
+	err := client.UpdateTaskStatus(
 		taskID,
 		api.TaskStatusCompleted,
 		"タスクが正常に完了しました",
@@ -118,9 +211,21 @@ func runExecute() error {
 		logger.WithTaskIDAndComponent("execute").WithError(err).Error("タスクステータスの更新に失敗しました")
 		return fmt.Errorf("タスクステータスの更新に失敗: %w", err)
 	}
-
-	logger.WithTaskIDAndComponent("execute").Info("タスク実行が完了しました")
 	return nil
+}
+
+// updateTaskStatusFailed はタスクステータスを失敗に更新するヘルパー関数です
+func updateTaskStatusFailed(client *api.Client, taskID, message, errorCode string) {
+	err := client.UpdateTaskStatus(
+		taskID,
+		api.TaskStatusFailed,
+		message,
+		0,
+		errorCode,
+	)
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("失敗ステータスの更新に失敗しました")
+	}
 }
 
 // setLogLevel はログレベルを設定します
@@ -136,5 +241,186 @@ func setLogLevel(level string) {
 		logrus.SetLevel(logrus.ErrorLevel)
 	default:
 		logrus.SetLevel(logrus.InfoLevel)
+	}
+}
+
+// retrieveScript はAPIからスクリプトを取得します
+func retrieveScript(client *api.Client, taskID string) (*api.Script, error) {
+	logger.WithTaskIDAndComponent("execute").Info("スクリプトを取得中...")
+	script, err := client.GetScript(taskID)
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("スクリプトの取得に失敗しました")
+		updateTaskStatusFailed(client, taskID, "スクリプトの取得に失敗しました", "SCRIPT_FETCH_ERROR")
+		return nil, fmt.Errorf("スクリプトの取得に失敗: %w", err)
+	}
+	return script, nil
+}
+
+// saveScriptToFile はスクリプトをファイルに保存します
+func saveScriptToFile(script *api.Script, workDir string) (string, error) {
+	scriptPath := filepath.Join(workDir, script.Filename)
+	err := os.WriteFile(scriptPath, []byte(script.Content), 0755)
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("スクリプトファイルの作成に失敗しました")
+		return "", fmt.Errorf("スクリプトファイルの作成に失敗: %w", err)
+	}
+	logger.WithTaskIDAndComponent("execute").WithField("path", scriptPath).Info("スクリプトファイルを作成しました")
+	return scriptPath, nil
+}
+
+// setupCommand はサブプロセスのコマンドを設定します
+func setupCommand(scriptPath, workDir string, parameters map[string]interface{}) *exec.Cmd {
+	cmd := exec.Command(scriptPath)
+	cmd.Dir = workDir
+
+	// 環境変数の設定
+	cmd.Env = os.Environ()
+	if parameters != nil {
+		if env, ok := parameters["env"].(map[string]interface{}); ok {
+			for k, v := range env {
+				cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
+			}
+		}
+	}
+	return cmd
+}
+
+// setupIOPipes はコマンドの標準入出力パイプを設定します
+func setupIOPipes(cmd *exec.Cmd) (io.ReadCloser, io.ReadCloser, io.WriteCloser, error) {
+	// 標準出力パイプの作成
+	stdoutPipe, err := cmd.StdoutPipe()
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("標準出力パイプの作成に失敗しました")
+		return nil, nil, nil, fmt.Errorf("標準出力パイプの作成に失敗: %w", err)
+	}
+
+	// 標準エラー出力パイプの作成
+	stderrPipe, err := cmd.StderrPipe()
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("標準エラー出力パイプの作成に失敗しました")
+		return nil, nil, nil, fmt.Errorf("標準エラー出力パイプの作成に失敗: %w", err)
+	}
+
+	// 標準入力パイプの作成
+	stdinPipe, err := cmd.StdinPipe()
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("標準入力パイプの作成に失敗しました")
+		return nil, nil, nil, fmt.Errorf("標準入力パイプの作成に失敗: %w", err)
+	}
+
+	return stdoutPipe, stderrPipe, stdinPipe, nil
+}
+
+// startCommand はコマンドを開始します
+func startCommand(cmd *exec.Cmd) error {
+	logger.WithTaskIDAndComponent("execute").Info("スクリプトの実行を開始します")
+	if err := cmd.Start(); err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("スクリプトの実行開始に失敗しました")
+		return fmt.Errorf("スクリプトの実行開始に失敗: %w", err)
+	}
+	return nil
+}
+
+// isInputWaiting は行が入力待ち状態かどうかを判定します
+func isInputWaiting(line string) bool {
+	return autoDetectInput && len(line) > 0 && (line[len(line)-1:] == ":" || line[len(line)-1:] == ">" || line[len(line)-1:] == "?")
+}
+
+// handleUserInput はユーザー入力を処理します
+func handleUserInput(client *api.Client, taskID string, stdin io.WriteCloser) {
+	logger.WithTaskIDAndComponent("execute").Info("標準入力からの入力を待機中...")
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("標準入力の読み取りに失敗しました")
+		return
+	}
+
+	logger.WithTaskIDAndComponent("execute").Info("入力を受け付けました")
+
+	// タスクステータスを処理中に戻す
+	if err := updateTaskStatusResumeProcessing(client, taskID); err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("処理中状態への更新に失敗しました")
+	}
+
+	// 入力をサブプロセスに送信
+	_, err = stdin.Write([]byte(input))
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Error("標準入力の書き込みに失敗しました")
+	}
+}
+
+// processStdout は標準出力を処理します
+func processStdout(client *api.Client, taskID string, stdout io.ReadCloser, stdin io.WriteCloser) {
+	scanner := bufio.NewScanner(stdout)
+	for scanner.Scan() {
+		line := scanner.Text()
+		logger.WithTaskIDAndComponent("script").Info(line)
+		client.SendLog(taskID, "INFO", line)
+
+		// 入力待ち状態の検出
+		if isInputWaiting(line) {
+			logger.WithTaskIDAndComponent("execute").Info("入力待ち状態を検出しました")
+
+			// タスクステータスを入力待ち状態に更新
+			if err := updateTaskStatusWaitingForInput(client, taskID); err != nil {
+				logger.WithTaskIDAndComponent("execute").WithError(err).Error("入力待ち状態への更新に失敗しました")
+			}
+
+			// 実際の実装では、WebSocketを通じて入力待ち状態を通知し、
+			// 管理パネルからの入力を待機する処理が必要です
+
+			// 簡易的な実装として、標準入力から入力を受け付ける
+			go handleUserInput(client, taskID, stdin)
+		}
+	}
+}
+
+// processStderr は標準エラー出力を処理します
+func processStderr(client *api.Client, taskID string, stderr io.ReadCloser) {
+	scanner := bufio.NewScanner(stderr)
+	for scanner.Scan() {
+		line := scanner.Text()
+		logger.WithTaskIDAndComponent("script").Error(line)
+		client.SendLog(taskID, "ERROR", line)
+	}
+}
+
+// processOutputs は標準出力と標準エラー出力を処理します
+func processOutputs(client *api.Client, taskID string, stdout, stderr io.ReadCloser, stdin io.WriteCloser) {
+	// 標準出力の処理
+	go processStdout(client, taskID, stdout, stdin)
+
+	// 標準エラー出力の処理
+	go processStderr(client, taskID, stderr)
+}
+
+// waitForCommand はコマンドの終了を待機します
+func waitForCommand(cmd *exec.Cmd, timeoutSec int) error {
+	// タイムアウト処理
+	var timeoutCh <-chan time.Time
+	if timeoutSec > 0 {
+		timeoutCh = time.After(time.Duration(timeoutSec) * time.Second)
+	}
+
+	// 完了チャネル
+	doneCh := make(chan error, 1)
+	go func() {
+		doneCh <- cmd.Wait()
+	}()
+
+	// サブプロセスの終了を待機
+	select {
+	case <-timeoutCh:
+		// タイムアウト発生
+		logger.WithTaskIDAndComponent("execute").Warn("スクリプト実行がタイムアウトしました")
+		if cmd.Process != nil {
+			cmd.Process.Signal(syscall.SIGTERM)
+			time.Sleep(2 * time.Second)
+			cmd.Process.Kill()
+		}
+		return fmt.Errorf("スクリプト実行がタイムアウトしました")
+	case err := <-doneCh:
+		return err
 	}
 }

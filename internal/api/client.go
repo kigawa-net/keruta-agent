@@ -27,9 +27,10 @@ type Client struct {
 type TaskStatus string
 
 const (
-	TaskStatusProcessing TaskStatus = "PROCESSING"
-	TaskStatusCompleted  TaskStatus = "COMPLETED"
-	TaskStatusFailed     TaskStatus = "FAILED"
+	TaskStatusProcessing      TaskStatus = "PROCESSING"
+	TaskStatusCompleted       TaskStatus = "COMPLETED"
+	TaskStatusFailed          TaskStatus = "FAILED"
+	TaskStatusWaitingForInput TaskStatus = "WAITING_FOR_INPUT"
 )
 
 // TaskUpdateRequest はタスク更新リクエストを表します
@@ -46,6 +47,21 @@ type LogRequest struct {
 	Message string `json:"message"`
 }
 
+// Script はスクリプト情報を表します
+type Script struct {
+	Content    string                 `json:"content"`
+	Language   string                 `json:"language"`
+	Filename   string                 `json:"filename"`
+	Parameters map[string]interface{} `json:"parameters"`
+}
+
+// ScriptResponse はスクリプト取得レスポンスを表します
+type ScriptResponse struct {
+	Success bool   `json:"success"`
+	TaskID  string `json:"taskId"`
+	Script  Script `json:"script"`
+}
+
 // NewClient は新しいAPIクライアントを作成します
 func NewClient() *Client {
 	return &Client{
@@ -60,7 +76,7 @@ func NewClient() *Client {
 // UpdateTaskStatus はタスクのステータスを更新します
 func (c *Client) UpdateTaskStatus(taskID string, status TaskStatus, message string, progress int, errorCode string) error {
 	url := fmt.Sprintf("%s/api/tasks/%s/status", c.baseURL, taskID)
-	
+
 	reqBody := TaskUpdateRequest{
 		Status:    status,
 		Message:   message,
@@ -105,7 +121,7 @@ func (c *Client) UpdateTaskStatus(taskID string, status TaskStatus, message stri
 // SendLog はログを送信します
 func (c *Client) SendLog(taskID string, level string, message string) error {
 	url := fmt.Sprintf("%s/api/tasks/%s/logs", c.baseURL, taskID)
-	
+
 	reqBody := LogRequest{
 		Level:   level,
 		Message: message,
@@ -205,10 +221,49 @@ func (c *Client) UploadArtifact(taskID string, filePath string, description stri
 	return nil
 }
 
+// GetScript はタスクのスクリプトを取得します
+func (c *Client) GetScript(taskID string) (*Script, error) {
+	url := fmt.Sprintf("%s/api/tasks/%s/script", c.baseURL, taskID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("リクエストの作成に失敗: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+
+	logger.WithTaskIDAndComponent("api").WithField("taskID", taskID).Debug("スクリプトを取得中")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API呼び出しに失敗: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var scriptResp ScriptResponse
+	if err := json.NewDecoder(resp.Body).Decode(&scriptResp); err != nil {
+		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w", err)
+	}
+
+	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
+		"taskID":   taskID,
+		"language": scriptResp.Script.Language,
+		"filename": scriptResp.Script.Filename,
+	}).Info("スクリプトを取得しました")
+
+	return &scriptResp.Script, nil
+}
+
 // CreateAutoFixTask は自動修正タスクを作成します
 func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode string) error {
 	url := fmt.Sprintf("%s/api/tasks/%s/auto-fix", c.baseURL, taskID)
-	
+
 	reqBody := map[string]string{
 		"errorMessage": errorMessage,
 		"errorCode":    errorCode,
@@ -245,4 +300,4 @@ func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode
 
 	logger.WithTaskIDAndComponent("api").Info("自動修正タスクを作成しました")
 	return nil
-} 
+}
