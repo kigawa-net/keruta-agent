@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -18,9 +19,11 @@ import (
 
 // Client はkeruta APIクライアントです
 type Client struct {
-	baseURL    string
-	token      string
-	httpClient *http.Client
+	baseURL       string
+	token         string
+	httpClient    *http.Client
+	wsClient      *WebSocketClient
+	wsInitialized bool
 }
 
 // TaskStatus はタスクのステータスを表します
@@ -70,11 +73,46 @@ func NewClient() *Client {
 		httpClient: &http.Client{
 			Timeout: config.GetTimeout(),
 		},
+		wsInitialized: false,
 	}
+}
+
+// CloseWebSocketClient はWebSocketクライアントを閉じます
+func (c *Client) CloseWebSocketClient() {
+	if c.wsInitialized && c.wsClient != nil {
+		c.wsClient.Close()
+		c.wsInitialized = false
+		c.wsClient = nil
+		logger.WithTaskIDAndComponent("api").Info("WebSocketクライアントを閉じました")
+	}
+}
+
+// GetWebSocketClient はWebSocketクライアントを取得します
+// taskIDが指定されていない場合は、config.GetTaskID()から取得します
+func (c *Client) GetWebSocketClient(taskID string) (*WebSocketClient, error) {
+	if taskID == "" {
+		taskID = config.GetTaskID()
+		if taskID == "" {
+			return nil, fmt.Errorf("タスクIDが設定されていません")
+		}
+	}
+
+	if !c.wsInitialized || c.wsClient == nil || c.wsClient.taskID != taskID {
+		c.wsClient = NewWebSocketClient(c.baseURL, c.token, taskID)
+		c.wsInitialized = true
+	}
+
+	if err := c.wsClient.Connect(); err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("WebSocket接続に失敗しました")
+		return nil, err
+	}
+
+	return c.wsClient, nil
 }
 
 // UpdateTaskStatus はタスクのステータスを更新します
 func (c *Client) UpdateTaskStatus(taskID string, status TaskStatus, message string, progress int, errorCode string) error {
+	// HTTP APIでステータス更新
 	url := fmt.Sprintf("%s/api/tasks/%s/status", c.baseURL, taskID)
 
 	reqBody := TaskUpdateRequest{
@@ -114,12 +152,18 @@ func (c *Client) UpdateTaskStatus(taskID string, status TaskStatus, message stri
 		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
 	}
 
+	// WebSocketでもステータス更新（WebSocketクライアントが初期化されている場合）
+	if c.wsInitialized && c.wsClient != nil {
+		c.wsClient.UpdateTaskStatus(status, message)
+	}
+
 	logger.WithTaskIDAndComponent("api").WithField("status", status).Info("タスクステータスを更新しました")
 	return nil
 }
 
 // SendLog はログを送信します
 func (c *Client) SendLog(taskID string, level string, message string) error {
+	// HTTP APIでログ送信
 	url := fmt.Sprintf("%s/api/tasks/%s/logs", c.baseURL, taskID)
 
 	reqBody := LogRequest{
@@ -154,6 +198,11 @@ func (c *Client) SendLog(taskID string, level string, message string) error {
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
+	}
+
+	// WebSocketでもログ送信（WebSocketクライアントが初期化されている場合）
+	if c.wsInitialized && c.wsClient != nil {
+		c.wsClient.SendLog(level, message)
 	}
 
 	return nil
@@ -221,6 +270,39 @@ func (c *Client) UploadArtifact(taskID string, filePath string, description stri
 	return nil
 }
 
+// WaitForInput は入力待ち状態を通知し、入力を待機します
+func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
+	// WebSocketクライアントの取得
+	wsClient, err := c.GetWebSocketClient(taskID)
+	if err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("WebSocketクライアントの取得に失敗しました")
+		// WebSocketが使えない場合は標準入力から入力を受け付ける
+		logger.WithTaskIDAndComponent("api").Info("標準入力からの入力を待機中...")
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return "", fmt.Errorf("標準入力の読み取りに失敗: %w", err)
+		}
+		return input, nil
+	}
+
+	// WebSocketで入力待ち状態を通知し、入力を待機
+	input, err := wsClient.WaitForInput(prompt)
+	if err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("WebSocketでの入力待機に失敗しました")
+		// エラーが発生した場合は標準入力から入力を受け付ける
+		logger.WithTaskIDAndComponent("api").Info("標準入力からの入力を待機中...")
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return "", fmt.Errorf("標準入力の読み取りに失敗: %w", err)
+		}
+		return input, nil
+	}
+
+	return input, nil
+}
+
 // GetScript はタスクのスクリプトを取得します
 func (c *Client) GetScript(taskID string) (*Script, error) {
 	url := fmt.Sprintf("%s/api/tasks/%s/script", c.baseURL, taskID)
@@ -248,7 +330,7 @@ func (c *Client) GetScript(taskID string) (*Script, error) {
 
 	var scriptResp ScriptResponse
 	if err := json.NewDecoder(resp.Body).Decode(&scriptResp); err != nil {
-		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w", err)
+		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w, %s/api/tasks/%s/script", err, c.baseURL, taskID)
 	}
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{

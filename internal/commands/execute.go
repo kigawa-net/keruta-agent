@@ -77,6 +77,16 @@ func runExecute() error {
 	}
 	client := api.NewClient()
 
+	// WebSocketクライアントの初期化
+	_, err := client.GetWebSocketClient(taskID)
+	if err != nil {
+		logger.WithTaskIDAndComponent("execute").WithError(err).Warn("WebSocketクライアントの初期化に失敗しました。WebSocket機能は無効になります。")
+	} else {
+		logger.WithTaskIDAndComponent("execute").Info("WebSocketクライアントを初期化しました")
+		// 関数終了時にWebSocketクライアントを閉じる
+		defer client.CloseWebSocketClient()
+	}
+
 	// ログレベルの設定
 	setLogLevel(logLevel)
 
@@ -326,30 +336,6 @@ func isInputWaiting(line string) bool {
 	return autoDetectInput && len(line) > 0 && (line[len(line)-1:] == ":" || line[len(line)-1:] == ">" || line[len(line)-1:] == "?")
 }
 
-// handleUserInput はユーザー入力を処理します
-func handleUserInput(client *api.Client, taskID string, stdin io.WriteCloser) {
-	logger.WithTaskIDAndComponent("execute").Info("標準入力からの入力を待機中...")
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Error("標準入力の読み取りに失敗しました")
-		return
-	}
-
-	logger.WithTaskIDAndComponent("execute").Info("入力を受け付けました")
-
-	// タスクステータスを処理中に戻す
-	if err := updateTaskStatusResumeProcessing(client, taskID); err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Error("処理中状態への更新に失敗しました")
-	}
-
-	// 入力をサブプロセスに送信
-	_, err = stdin.Write([]byte(input))
-	if err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Error("標準入力の書き込みに失敗しました")
-	}
-}
-
 // processStdout は標準出力を処理します
 func processStdout(client *api.Client, taskID string, stdout io.ReadCloser, stdin io.WriteCloser) {
 	scanner := bufio.NewScanner(stdout)
@@ -367,11 +353,28 @@ func processStdout(client *api.Client, taskID string, stdout io.ReadCloser, stdi
 				logger.WithTaskIDAndComponent("execute").WithError(err).Error("入力待ち状態への更新に失敗しました")
 			}
 
-			// 実際の実装では、WebSocketを通じて入力待ち状態を通知し、
-			// 管理パネルからの入力を待機する処理が必要です
+			// WebSocketを通じて入力待ち状態を通知し、入力を待機
+			go func() {
+				// 入力を待機
+				input, err := client.WaitForInput(taskID, line)
+				if err != nil {
+					logger.WithTaskIDAndComponent("execute").WithError(err).Error("入力の待機に失敗しました")
+					return
+				}
 
-			// 簡易的な実装として、標準入力から入力を受け付ける
-			go handleUserInput(client, taskID, stdin)
+				logger.WithTaskIDAndComponent("execute").Info("入力を受け付けました")
+
+				// タスクステータスを処理中に戻す
+				if err := updateTaskStatusResumeProcessing(client, taskID); err != nil {
+					logger.WithTaskIDAndComponent("execute").WithError(err).Error("処理中状態への更新に失敗しました")
+				}
+
+				// 入力をサブプロセスに送信
+				_, err = stdin.Write([]byte(input))
+				if err != nil {
+					logger.WithTaskIDAndComponent("execute").WithError(err).Error("標準入力の書き込みに失敗しました")
+				}
+			}()
 		}
 	}
 }
