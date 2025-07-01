@@ -170,8 +170,9 @@ func updateTaskStatusProcessing(client *api.Client, taskID string) error {
 		"",
 	)
 	if err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Error("タスクステータスの更新に失敗しました")
-		return fmt.Errorf("タスクステータスの更新に失敗: %w", err)
+		logger.WithTaskIDAndComponent("execute").WithError(err).Warning("タスクステータスの更新に失敗しましたが、処理を継続します")
+		// エラーを返さずに処理を継続
+		return nil
 	}
 	return nil
 }
@@ -186,8 +187,9 @@ func updateTaskStatusWaitingForInput(client *api.Client, taskID string) error {
 		"",
 	)
 	if err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Error("入力待ち状態への更新に失敗しました")
-		return fmt.Errorf("入力待ち状態への更新に失敗: %w", err)
+		logger.WithTaskIDAndComponent("execute").WithError(err).Warning("入力待ち状態への更新に失敗しましたが、処理を継続します")
+		// エラーを返さずに処理を継続
+		return nil
 	}
 	return nil
 }
@@ -202,8 +204,9 @@ func updateTaskStatusResumeProcessing(client *api.Client, taskID string) error {
 		"",
 	)
 	if err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Error("処理中状態への更新に失敗しました")
-		return fmt.Errorf("処理中状態への更新に失敗: %w", err)
+		logger.WithTaskIDAndComponent("execute").WithError(err).Warning("処理中状態への更新に失敗しましたが、処理を継続します")
+		// エラーを返さずに処理を継続
+		return nil
 	}
 	return nil
 }
@@ -218,8 +221,9 @@ func updateTaskStatusCompleted(client *api.Client, taskID string) error {
 		"",
 	)
 	if err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Error("タスクステータスの更新に失敗しました")
-		return fmt.Errorf("タスクステータスの更新に失敗: %w", err)
+		logger.WithTaskIDAndComponent("execute").WithError(err).Warning("タスクステータスの更新に失敗しましたが、処理を継続します")
+		// エラーを返さずに処理を継続
+		return nil
 	}
 	return nil
 }
@@ -234,7 +238,7 @@ func updateTaskStatusFailed(client *api.Client, taskID, message, errorCode strin
 		errorCode,
 	)
 	if err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Error("失敗ステータスの更新に失敗しました")
+		logger.WithTaskIDAndComponent("execute").WithError(err).Warning("失敗ステータスの更新に失敗しましたが、処理を継続します")
 	}
 }
 
@@ -349,9 +353,7 @@ func processStdout(client *api.Client, taskID string, stdout io.ReadCloser, stdi
 			logger.WithTaskIDAndComponent("execute").Info("入力待ち状態を検出しました")
 
 			// タスクステータスを入力待ち状態に更新
-			if err := updateTaskStatusWaitingForInput(client, taskID); err != nil {
-				logger.WithTaskIDAndComponent("execute").WithError(err).Error("入力待ち状態への更新に失敗しました")
-			}
+			updateTaskStatusWaitingForInput(client, taskID)
 
 			// WebSocketを通じて入力待ち状態を通知し、入力を待機
 			go func() {
@@ -365,9 +367,7 @@ func processStdout(client *api.Client, taskID string, stdout io.ReadCloser, stdi
 				logger.WithTaskIDAndComponent("execute").Info("入力を受け付けました")
 
 				// タスクステータスを処理中に戻す
-				if err := updateTaskStatusResumeProcessing(client, taskID); err != nil {
-					logger.WithTaskIDAndComponent("execute").WithError(err).Error("処理中状態への更新に失敗しました")
-				}
+				updateTaskStatusResumeProcessing(client, taskID)
 
 				// 入力をサブプロセスに送信
 				_, err = stdin.Write([]byte(input))

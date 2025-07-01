@@ -6,10 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"keruta-agent/internal/config"
 	"keruta-agent/internal/logger"
@@ -113,161 +111,36 @@ func (c *Client) GetWebSocketClient(taskID string) (*WebSocketClient, error) {
 // UpdateTaskStatus はタスクのステータスを更新します
 func (c *Client) UpdateTaskStatus(taskID string, status TaskStatus, message string, progress int, errorCode string) error {
 	// HTTP APIでステータス更新
-	url := fmt.Sprintf("%s/api/v1/tasks/%s/status", c.baseURL, taskID)
-
-	reqBody := TaskUpdateRequest{
-		Status:    status,
-		Message:   message,
-		Progress:  progress,
-		ErrorCode: errorCode,
-	}
-
-	jsonData, err := json.Marshal(reqBody)
+	err := updateTaskStatusHTTP(c, taskID, status, message, progress, errorCode)
 	if err != nil {
-		return fmt.Errorf("リクエストボディのマーシャルに失敗: %w", err)
+		// WebSocketでもステータス更新を試みる
+		updateTaskStatusWebSocket(c, status, message)
+		return err
 	}
 
-	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("リクエストの作成に失敗: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
-		"url":     url,
-		"status":  status,
-		"message": message,
-	}).Debug("タスクステータスを更新中")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("API呼び出しに失敗: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
-	}
-
-	// WebSocketでもステータス更新（WebSocketクライアントが初期化されている場合）
-	if c.wsInitialized && c.wsClient != nil {
-		c.wsClient.UpdateTaskStatus(status, message)
-	}
-
-	logger.WithTaskIDAndComponent("api").WithField("status", status).Info("タスクステータスを更新しました")
+	// WebSocketでもステータス更新
+	updateTaskStatusWebSocket(c, status, message)
 	return nil
 }
 
 // SendLog はログを送信します
 func (c *Client) SendLog(taskID string, level string, message string) error {
 	// HTTP APIでログ送信
-	url := fmt.Sprintf("%s/api/v1/tasks/%s/logs", c.baseURL, taskID)
-
-	reqBody := LogRequest{
-		Level:   level,
-		Message: message,
-	}
-
-	jsonData, err := json.Marshal(reqBody)
+	err := sendLogHTTP(c, taskID, level, message)
 	if err != nil {
-		return fmt.Errorf("リクエストボディのマーシャルに失敗: %w", err)
+		// WebSocketでもログ送信を試みる
+		sendLogWebSocket(c, level, message)
+		return nil
 	}
 
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return fmt.Errorf("リクエストの作成に失敗: %w", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
-		"level":   level,
-		"message": message,
-	}).Debug("ログを送信中")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("API呼び出しに失敗: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
-	}
-
-	// WebSocketでもログ送信（WebSocketクライアントが初期化されている場合）
-	if c.wsInitialized && c.wsClient != nil {
-		c.wsClient.SendLog(level, message)
-	}
-
+	// WebSocketでもログ送信
+	sendLogWebSocket(c, level, message)
 	return nil
 }
 
 // UploadArtifact は成果物をアップロードします
 func (c *Client) UploadArtifact(taskID string, filePath string, description string) error {
-	url := fmt.Sprintf("%s/api/v1/tasks/%s/artifacts", c.baseURL, taskID)
-
-	file, err := os.Open(filePath)
-	if err != nil {
-		return fmt.Errorf("ファイルのオープンに失敗: %w", err)
-	}
-	defer file.Close()
-
-	var buf bytes.Buffer
-	writer := multipart.NewWriter(&buf)
-
-	// ファイルフィールド
-	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
-	if err != nil {
-		return fmt.Errorf("フォームファイルの作成に失敗: %w", err)
-	}
-
-	_, err = io.Copy(part, file)
-	if err != nil {
-		return fmt.Errorf("ファイルのコピーに失敗: %w", err)
-	}
-
-	// 説明フィールド
-	if description != "" {
-		err = writer.WriteField("description", description)
-		if err != nil {
-			return fmt.Errorf("説明フィールドの書き込みに失敗: %w", err)
-		}
-	}
-
-	writer.Close()
-
-	req, err := http.NewRequest("POST", url, &buf)
-	if err != nil {
-		return fmt.Errorf("リクエストの作成に失敗: %w", err)
-	}
-
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+c.token)
-
-	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
-		"file":        filePath,
-		"description": description,
-	}).Debug("成果物をアップロード中")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("API呼び出しに失敗: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
-	}
-
-	logger.WithTaskIDAndComponent("api").WithField("file", filePath).Info("成果物をアップロードしました")
-	return nil
+	return uploadArtifactHTTP(c, taskID, filePath, description)
 }
 
 // WaitForInput は入力待ち状態を通知し、入力を待機します
@@ -309,6 +182,7 @@ func (c *Client) GetScript(taskID string) (*Script, error) {
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("リクエストの作成に失敗しました")
 		return nil, fmt.Errorf("リクエストの作成に失敗: %w", err)
 	}
 
@@ -319,17 +193,23 @@ func (c *Client) GetScript(taskID string) (*Script, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("API呼び出しに失敗しました")
 		return nil, fmt.Errorf("API呼び出しに失敗: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
+			"statusCode": resp.StatusCode,
+			"response":   string(body),
+		}).Error("API呼び出しが失敗しました")
 		return nil, fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
 	}
 
 	var scriptResp ScriptResponse
 	if err := json.NewDecoder(resp.Body).Decode(&scriptResp); err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("レスポンスのデコードに失敗しました")
 		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w, %s/api/v1/tasks/%s/script", err, c.baseURL, taskID)
 	}
 
@@ -353,11 +233,13 @@ func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode
 
 	jsonData, err := json.Marshal(reqBody)
 	if err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("リクエストボディのマーシャルに失敗しました")
 		return fmt.Errorf("リクエストボディのマーシャルに失敗: %w", err)
 	}
 
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("リクエストの作成に失敗しました")
 		return fmt.Errorf("リクエストの作成に失敗: %w", err)
 	}
 
@@ -371,13 +253,18 @@ func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("API呼び出しに失敗: %w", err)
+		logger.WithTaskIDAndComponent("api").WithError(err).Warning("API呼び出しに失敗しましたが、処理を継続します")
+		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
+		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
+			"statusCode": resp.StatusCode,
+			"response":   string(body),
+		}).Warning("API呼び出しが失敗しましたが、処理を継続します")
+		return nil
 	}
 
 	logger.WithTaskIDAndComponent("api").Info("自動修正タスクを作成しました")

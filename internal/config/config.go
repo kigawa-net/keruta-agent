@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -131,7 +132,8 @@ func loadFromFile() error {
 
 	// 設定ファイルが存在しない場合は無視
 	if err := viper.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		var configFileNotFoundError viper.ConfigFileNotFoundError
+		if !errors.As(err, &configFileNotFoundError) {
 			return err
 		}
 	}
@@ -177,4 +179,4 @@ func GetAPIToken() string {
 // GetTimeout はタイムアウトを取得します
 func GetTimeout() time.Duration {
 	return GlobalConfig.API.Timeout
-} 
+}
