@@ -51,6 +51,7 @@ func NewWebSocketClient(baseURL, token, taskID string) *WebSocketClient {
 		// URLからスキーマを削除
 		u, err := url.Parse(baseURL)
 		if err == nil {
+			// u.Host にはホスト名とポート番号（指定されている場合）が含まれる
 			host := u.Host
 			if u.Scheme == "https" {
 				wsURL = fmt.Sprintf("wss://%s/ws/agent?token=%s", host, token)
