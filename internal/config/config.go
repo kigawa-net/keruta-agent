@@ -150,6 +150,9 @@ func validate() error {
 	if viper.GetString("api.token") == "" {
 		return fmt.Errorf("KERUTA_API_TOKEN が設定されていません")
 	}
+	if os.Getenv("KERUTA_TASK_ID") == "" {
+		return fmt.Errorf("KERUTA_TASK_ID が設定されていません")
+	}
 
 	// 設定を構造体にマッピング
 	var config Config

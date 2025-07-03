@@ -2,11 +2,15 @@ package api
 
 import (
 	"fmt"
+	"io"
+	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sirupsen/logrus"
 	"keruta-agent/internal/logger"
 )
 
@@ -46,9 +50,12 @@ type WebSocketClient struct {
 
 // NewWebSocketClient は新しいWebSocketクライアントを作成します
 func NewWebSocketClient(baseURL, token, taskID string) *WebSocketClient {
+	// デフォルトのWebSocket URL
 	wsURL := fmt.Sprintf("ws://%s/ws/agent?token=%s", baseURL, token)
-	if baseURL[:4] == "http" {
-		// URLからスキーマを削除
+
+	// URLの形式を確認して適切に処理
+	if strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://") {
+		// URLをパース
 		u, err := url.Parse(baseURL)
 		if err == nil {
 			// u.Host にはホスト名とポート番号（指定されている場合）が含まれる
@@ -58,7 +65,16 @@ func NewWebSocketClient(baseURL, token, taskID string) *WebSocketClient {
 			} else {
 				wsURL = fmt.Sprintf("ws://%s/ws/agent?token=%s", host, token)
 			}
+		} else {
+			logger.WithTaskIDAndComponent("websocket").WithError(err).
+				Error("WebSocket URL の作成に失敗しました。baseURL のパースに失敗しました")
 		}
+	} else if strings.Contains(baseURL, ":") {
+		// ホスト:ポートの形式と仮定
+		wsURL = fmt.Sprintf("ws://%s/ws/agent?token=%s", baseURL, token)
+	} else {
+		// ホストのみの形式と仮定
+		wsURL = fmt.Sprintf("ws://%s/ws/agent?token=%s", baseURL, token)
 	}
 
 	return &WebSocketClient{
@@ -85,8 +101,26 @@ func (wsc *WebSocketClient) Connect() error {
 	logger.WithTaskIDAndComponent("websocket").Info("WebSocketサーバーに接続中...")
 
 	dialer := websocket.DefaultDialer
-	conn, _, err := dialer.Dial(wsc.url, nil)
+
+	// ヘッダーの設定
+	header := http.Header{}
+	header.Add("Authorization", "Bearer "+wsc.token)
+
+	// 接続の試行
+	logger.WithTaskIDAndComponent("websocket").WithField("url", wsc.url).Debug("WebSocket接続を試行中...")
+	conn, resp, err := dialer.Dial(wsc.url, header)
+
 	if err != nil {
+		// レスポンスがある場合はエラー詳細をログに記録
+		if resp != nil {
+			body, _ := io.ReadAll(resp.Body)
+			logger.WithTaskIDAndComponent("websocket").WithFields(logrus.Fields{
+				"statusCode": resp.StatusCode,
+				"response":   string(body),
+				"url":        wsc.url,
+			}).Error("WebSocket接続に失敗しました")
+			resp.Body.Close()
+		}
 		return fmt.Errorf("WebSocket接続に失敗: %w", err)
 	}
 
@@ -253,12 +287,31 @@ func (wsc *WebSocketClient) reconnect() {
 		logger.WithTaskIDAndComponent("websocket").Infof("WebSocket再接続を試みています (%d/%d)...", i+1, wsc.maxRetries)
 
 		dialer := websocket.DefaultDialer
-		conn, _, err := dialer.Dial(wsc.url, nil)
+
+		// ヘッダーの設定
+		header := http.Header{}
+		header.Add("Authorization", "Bearer "+wsc.token)
+
+		// 接続の試行
+		logger.WithTaskIDAndComponent("websocket").WithField("url", wsc.url).Debug("WebSocket再接続を試行中...")
+		conn, resp, err := dialer.Dial(wsc.url, header)
+
 		if err == nil {
 			wsc.conn = conn
 			wsc.isConnected = true
 			logger.WithTaskIDAndComponent("websocket").Info("WebSocket再接続に成功しました")
 			return
+		}
+
+		// レスポンスがある場合はエラー詳細をログに記録
+		if resp != nil {
+			body, _ := io.ReadAll(resp.Body)
+			logger.WithTaskIDAndComponent("websocket").WithFields(logrus.Fields{
+				"statusCode": resp.StatusCode,
+				"response":   string(body),
+				"url":        wsc.url,
+			}).Error("WebSocket再接続に失敗しました")
+			resp.Body.Close()
 		}
 
 		logger.WithTaskIDAndComponent("websocket").WithError(err).Error("WebSocket再接続に失敗しました")
