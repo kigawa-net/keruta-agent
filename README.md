@@ -216,7 +216,7 @@ keruta config set <key> <value>
 |--------|------|-----|
 | `KERUTA_TASK_ID` | タスクの一意識別子 | `123e4567-e89b-12d3-a456-426614174000` |
 | `KERUTA_API_URL` | keruta APIのURL | `http://keruta-api:8080` |
-| `KERUTA_API_TOKEN` | API認証トークン | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` |
+| `KERUTA_API_TOKEN` | API認証トークン（実行中に更新された場合は自動的に最新のトークンが使用されます） | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...` |
 
 ### オプション環境変数
 | 変数名 | 説明 | デフォルト値 |

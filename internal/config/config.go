@@ -176,7 +176,8 @@ func GetAPIURL() string {
 
 // GetAPIToken はAPIトークンを取得します
 func GetAPIToken() string {
-	return GlobalConfig.API.Token
+	// 環境変数から最新のトークンを取得して更新
+	return RefreshAPIToken()
 }
 
 // GetTimeout はタイムアウトを取得します
