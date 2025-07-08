@@ -22,7 +22,6 @@ func getScriptHTTP(client *Client, taskID string) (*Script, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+client.token)
 
 	logger.WithTaskIDAndComponent("api").WithField("taskID", taskID).Debug("スクリプトを取得中")
 

@@ -34,7 +34,6 @@ func updateTaskStatusHTTP(client *Client, taskID string, status TaskStatus, mess
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+client.token)
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
 		"url":     url,

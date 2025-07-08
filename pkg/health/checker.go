@@ -84,7 +84,7 @@ func (c *Checker) CheckAPI() CheckResult {
 
 	// 簡単なヘルスチェックエンドポイントを呼び出し
 	url := fmt.Sprintf("%s/health", config.GetAPIURL())
-	
+
 	client := &http.Client{
 		Timeout: 10 * time.Second,
 	}
@@ -97,7 +97,11 @@ func (c *Checker) CheckAPI() CheckResult {
 			Error:   err.Error(),
 		}
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithComponent("health").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return CheckResult{
@@ -118,7 +122,7 @@ func (c *Checker) CheckDisk() CheckResult {
 
 	// 成果物ディレクトリの容量をチェック
 	dir := config.GlobalConfig.Artifacts.Directory
-	
+
 	// ディレクトリが存在しない場合は作成を試行
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		if err := os.MkdirAll(dir, 0755); err != nil {
@@ -173,12 +177,7 @@ func (c *Checker) CheckConfig() CheckResult {
 		}
 	}
 
-	if config.GetAPIToken() == "" {
-		return CheckResult{
-			Status:  false,
-			Message: "APIトークンが設定されていません",
-		}
-	}
+	// API認証は不要になったため、トークンのチェックは行わない
 
 	if config.GetTaskID() == "" {
 		return CheckResult{
@@ -210,4 +209,4 @@ func (c *Checker) CheckSpecific(checkType string) CheckResult {
 			Message: fmt.Sprintf("不明なチェックタイプ: %s", checkType),
 		}
 	}
-} 
+}

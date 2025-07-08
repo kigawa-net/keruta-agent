@@ -80,7 +80,6 @@ func logAPIError(method, url string, reqHeaders map[string]string, reqBody inter
 // Client はkeruta APIクライアントです
 type Client struct {
 	baseURL    string
-	token      string
 	httpClient *http.Client
 }
 
@@ -127,7 +126,6 @@ type ScriptResponse struct {
 func NewClient() *Client {
 	return &Client{
 		baseURL: config.GetAPIURL(),
-		token:   config.GetAPIToken(),
 		httpClient: &http.Client{
 			Timeout: config.GetTimeout(),
 		},
@@ -212,7 +210,6 @@ func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.token)
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
 		"errorMessage": errorMessage,

@@ -66,7 +66,6 @@ func uploadArtifactHTTP(client *Client, taskID string, filePath string, descript
 	}
 
 	req.Header.Set("Content-Type", writer.FormDataContentType())
-	req.Header.Set("Authorization", "Bearer "+client.token)
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
 		"file":        filePath,

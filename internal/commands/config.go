@@ -13,8 +13,6 @@ import (
 )
 
 var (
-	configKey   string
-	configValue string
 	configFormat string
 )
 
@@ -48,7 +46,7 @@ var configSetCmd = &cobra.Command{
 
 func init() {
 	configShowCmd.Flags().StringVar(&configFormat, "format", "text", "出力形式 (text, json)")
-	
+
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configSetCmd)
 }
@@ -148,15 +146,7 @@ func outputConfigText() error {
 	fmt.Println("\n[環境変数]")
 	fmt.Printf("  タスクID: %s\n", config.GetTaskID())
 	fmt.Printf("  API URL: %s\n", config.GetAPIURL())
-	fmt.Printf("  API トークン: %s\n", maskToken(config.GetAPIToken()))
+	fmt.Println("  API 認証: 不要")
 
 	return nil
 }
-
-// maskToken はトークンをマスクします
-func maskToken(token string) string {
-	if len(token) <= 8 {
-		return "***"
-	}
-	return token[:4] + "..." + token[len(token)-4:]
-} 
