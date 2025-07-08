@@ -77,9 +77,6 @@ func runExecute() error {
 	}
 	client := api.NewClient()
 
-	// WebSocket機能は削除されました
-	logger.WithTaskIDAndComponent("execute").Info("WebSocket機能は削除されました")
-
 	// ログレベルの設定
 	setLogLevel(logLevel)
 
