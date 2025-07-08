@@ -62,10 +62,3 @@ func updateTaskStatusHTTP(client *Client, taskID string, status TaskStatus, mess
 	return nil
 }
 
-// updateTaskStatusWebSocket はWebSocketを使用してタスクのステータスを更新します
-func updateTaskStatusWebSocket(client *Client, status TaskStatus, message string) {
-	if client.wsInitialized && client.wsClient != nil {
-		client.wsClient.UpdateTaskStatus(status, message)
-		logger.WithTaskIDAndComponent("api").Info("WebSocketでタスクステータスを更新しました")
-	}
-}

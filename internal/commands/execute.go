@@ -77,15 +77,8 @@ func runExecute() error {
 	}
 	client := api.NewClient()
 
-	// WebSocketクライアントの初期化
-	_, err := client.GetWebSocketClient(taskID)
-	if err != nil {
-		logger.WithTaskIDAndComponent("execute").WithError(err).Warn("WebSocketクライアントの初期化に失敗しました。WebSocket機能は無効になります。")
-	} else {
-		logger.WithTaskIDAndComponent("execute").Info("WebSocketクライアントを初期化しました")
-		// 関数終了時にWebSocketクライアントを閉じる
-		defer client.CloseWebSocketClient()
-	}
+	// WebSocket機能は削除されました
+	logger.WithTaskIDAndComponent("execute").Info("WebSocket機能は削除されました")
 
 	// ログレベルの設定
 	setLogLevel(logLevel)
