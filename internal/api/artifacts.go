@@ -23,7 +23,11 @@ func uploadArtifactHTTP(client *Client, taskID string, filePath string, descript
 		logger.WithTaskIDAndComponent("api").WithError(err).Error("ファイルのオープンに失敗しました")
 		return fmt.Errorf("ファイルのオープンに失敗: %w", err)
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil {
+			logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("ファイルのクローズに失敗しました")
+		}
+	}()
 
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
@@ -50,7 +54,10 @@ func uploadArtifactHTTP(client *Client, taskID string, filePath string, descript
 		}
 	}
 
-	writer.Close()
+	if err := writer.Close(); err != nil {
+		logger.WithTaskIDAndComponent("api").WithError(err).Error("マルチパートライターのクローズに失敗しました")
+		return fmt.Errorf("マルチパートライターのクローズに失敗: %w", err)
+	}
 
 	req, err := http.NewRequest("POST", url, &buf)
 	if err != nil {
@@ -66,19 +73,30 @@ func uploadArtifactHTTP(client *Client, taskID string, filePath string, descript
 		"description": description,
 	}).Debug("成果物をアップロード中")
 
+	// リクエストヘッダーを収集
+	headers := make(map[string]string)
+	for k, v := range req.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+
 	resp, err := client.httpClient.Do(req)
+
+	// API呼び出しエラーの詳細をログに記録（警告レベル）
+	logAPIError("POST", url, headers, map[string]string{"file": filePath, "description": description}, resp, err, true)
+
 	if err != nil {
-		logger.WithTaskIDAndComponent("api").WithError(err).Warning("API呼び出しに失敗しましたが、処理を継続します")
 		return fmt.Errorf("API呼び出しに失敗: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
-			"statusCode": resp.StatusCode,
-			"response":   string(body),
-		}).Warning("API呼び出しが失敗しましたが、処理を継続します")
 		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
 	}
 

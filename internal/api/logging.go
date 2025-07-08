@@ -39,22 +39,32 @@ func sendLogHTTP(client *Client, taskID string, level string, message string) er
 		"message": message,
 	}).Debug("ログを送信中")
 
+	// リクエストヘッダーを収集
+	headers := make(map[string]string)
+	for k, v := range req.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+
 	resp, err := client.httpClient.Do(req)
+
+	// API呼び出しエラーの詳細をログに記録（警告レベル）
+	logAPIError("POST", url, headers, reqBody, resp, err, true)
+
 	if err != nil {
-		logger.WithTaskIDAndComponent("api").WithError(err).Warning("API呼び出しに失敗しましたが、処理を継続します")
 		return fmt.Errorf("API呼び出しに失敗: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
-			"statusCode": resp.StatusCode,
-			"response":   string(body),
-		}).Warning("API呼び出しが失敗しましたが、処理を継続します")
 		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
 	}
 
 	return nil
 }
-

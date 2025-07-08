@@ -42,23 +42,33 @@ func updateTaskStatusHTTP(client *Client, taskID string, status TaskStatus, mess
 		"message": message,
 	}).Debug("タスクステータスを更新中")
 
+	// リクエストヘッダーを収集
+	headers := make(map[string]string)
+	for k, v := range req.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+
 	resp, err := client.httpClient.Do(req)
+
+	// API呼び出しエラーの詳細をログに記録
+	logAPIError("PUT", url, headers, reqBody, resp, err, false)
+
 	if err != nil {
-		logger.WithTaskIDAndComponent("api").WithError(err).Error("API呼び出しに失敗しました")
 		return fmt.Errorf("API呼び出しに失敗: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
-			"statusCode": resp.StatusCode,
-			"response":   string(body),
-		}).Error("API呼び出しが失敗しました")
 		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
 	}
 
 	logger.WithTaskIDAndComponent("api").WithField("status", status).Info("タスクステータスを更新しました")
 	return nil
 }
-

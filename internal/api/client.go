@@ -8,12 +8,74 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"keruta-agent/internal/config"
 	"keruta-agent/internal/logger"
 
 	"github.com/sirupsen/logrus"
 )
+
+// logAPIError はAPI呼び出しのエラーを詳細にログに記録します
+func logAPIError(method, url string, reqHeaders map[string]string, reqBody interface{}, resp *http.Response, err error, isWarning bool) {
+	logEntry := logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
+		"method": method,
+		"url":    url,
+	})
+
+	// リクエストヘッダーをログに記録（認証情報は除外）
+	headers := make(map[string]string)
+	for k, v := range reqHeaders {
+		if !strings.Contains(strings.ToLower(k), "auth") {
+			headers[k] = v
+		} else {
+			headers[k] = "[REDACTED]"
+		}
+	}
+	logEntry = logEntry.WithField("requestHeaders", headers)
+
+	// リクエストボディをログに記録
+	if reqBody != nil {
+		logEntry = logEntry.WithField("requestBody", reqBody)
+	}
+
+	if err != nil {
+		// HTTP呼び出し自体のエラー
+		logEntry = logEntry.WithError(err)
+		if isWarning {
+			logEntry.Warning("API呼び出しに失敗しましたが、処理を継続します")
+		} else {
+			logEntry.Error("API呼び出しに失敗しました")
+		}
+		return
+	}
+
+	if resp != nil && (resp.StatusCode < 200 || resp.StatusCode >= 300) {
+		// ステータスコードエラー
+		var respBody string
+		if resp.Body != nil {
+			bodyBytes, readErr := io.ReadAll(resp.Body)
+			if readErr == nil {
+				respBody = string(bodyBytes)
+				// レスポンスボディを再設定
+				resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+			} else {
+				respBody = fmt.Sprintf("レスポンスボディの読み取りに失敗: %v", readErr)
+			}
+		}
+
+		logEntry = logEntry.WithFields(logrus.Fields{
+			"statusCode":   resp.StatusCode,
+			"responseBody": respBody,
+		})
+
+		if isWarning {
+			logEntry.Warning("API呼び出しが失敗しましたが、処理を継続します")
+		} else {
+			logEntry.Error("API呼び出しが失敗しました")
+		}
+	}
+}
 
 // Client はkeruta APIクライアントです
 type Client struct {
@@ -157,9 +219,20 @@ func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode
 		"errorCode":    errorCode,
 	}).Info("自動修正タスクを作成中")
 
+	// リクエストヘッダーを収集
+	headers := make(map[string]string)
+	for k, v := range req.Header {
+		if len(v) > 0 {
+			headers[k] = v[0]
+		}
+	}
+
 	resp, err := c.httpClient.Do(req)
+
+	// API呼び出しエラーの詳細をログに記録（警告レベル）
+	logAPIError("POST", url, headers, reqBody, resp, err, true)
+
 	if err != nil {
-		logger.WithTaskIDAndComponent("api").WithError(err).Warning("API呼び出しに失敗しましたが、処理を継続します")
 		return fmt.Errorf("API呼び出しに失敗: %w", err)
 	}
 	defer func() {
@@ -170,10 +243,6 @@ func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		body, _ := io.ReadAll(resp.Body)
-		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
-			"statusCode": resp.StatusCode,
-			"response":   string(body),
-		}).Warning("API呼び出しが失敗しましたが、処理を継続します")
 		return fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
 	}
 
