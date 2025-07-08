@@ -58,10 +58,3 @@ func sendLogHTTP(client *Client, taskID string, level string, message string) er
 	return nil
 }
 
-// sendLogWebSocket はWebSocketを使用してログを送信します
-func sendLogWebSocket(client *Client, level string, message string) {
-	if client.wsInitialized && client.wsClient != nil {
-		client.wsClient.SendLog(level, message)
-		logger.WithTaskIDAndComponent("api").Debug("WebSocketでログを送信しました")
-	}
-}

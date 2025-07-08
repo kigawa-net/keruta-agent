@@ -17,11 +17,9 @@ import (
 
 // Client はkeruta APIクライアントです
 type Client struct {
-	baseURL       string
-	token         string
-	httpClient    *http.Client
-	wsClient      *WebSocketClient
-	wsInitialized bool
+	baseURL    string
+	token      string
+	httpClient *http.Client
 }
 
 // TaskStatus はタスクのステータスを表します
@@ -71,41 +69,15 @@ func NewClient() *Client {
 		httpClient: &http.Client{
 			Timeout: config.GetTimeout(),
 		},
-		wsInitialized: false,
 	}
 }
 
-// CloseWebSocketClient はWebSocketクライアントを閉じます
-func (c *Client) CloseWebSocketClient() {
-	if c.wsInitialized && c.wsClient != nil {
-		c.wsClient.Close()
-		c.wsInitialized = false
-		c.wsClient = nil
-		logger.WithTaskIDAndComponent("api").Info("WebSocketクライアントを閉じました")
-	}
-}
 
 // GetWebSocketClient はWebSocketクライアントを取得します
-// taskIDが指定されていない場合は、config.GetTaskID()から取得します
-func (c *Client) GetWebSocketClient(taskID string) (*WebSocketClient, error) {
-	if taskID == "" {
-		taskID = config.GetTaskID()
-		if taskID == "" {
-			return nil, fmt.Errorf("タスクIDが設定されていません")
-		}
-	}
-
-	if !c.wsInitialized || c.wsClient == nil || c.wsClient.taskID != taskID {
-		c.wsClient = NewWebSocketClient(c.baseURL, c.token, taskID)
-		c.wsInitialized = true
-	}
-
-	if err := c.wsClient.Connect(); err != nil {
-		logger.WithTaskIDAndComponent("api").WithError(err).Error("WebSocket接続に失敗しました")
-		return nil, err
-	}
-
-	return c.wsClient, nil
+// WebSocket機能は削除されました
+func (c *Client) GetWebSocketClient(taskID string) (interface{}, error) {
+	logger.WithTaskIDAndComponent("api").Info("WebSocket機能は削除されました")
+	return nil, fmt.Errorf("WebSocket機能は削除されました")
 }
 
 // UpdateTaskStatus はタスクのステータスを更新します
@@ -113,13 +85,8 @@ func (c *Client) UpdateTaskStatus(taskID string, status TaskStatus, message stri
 	// HTTP APIでステータス更新
 	err := updateTaskStatusHTTP(c, taskID, status, message, progress, errorCode)
 	if err != nil {
-		// WebSocketでもステータス更新を試みる
-		updateTaskStatusWebSocket(c, status, message)
 		return err
 	}
-
-	// WebSocketでもステータス更新
-	updateTaskStatusWebSocket(c, status, message)
 	return nil
 }
 
@@ -128,13 +95,8 @@ func (c *Client) SendLog(taskID string, level string, message string) error {
 	// HTTP APIでログ送信
 	err := sendLogHTTP(c, taskID, level, message)
 	if err != nil {
-		// WebSocketでもログ送信を試みる
-		sendLogWebSocket(c, level, message)
 		return nil
 	}
-
-	// WebSocketでもログ送信
-	sendLogWebSocket(c, level, message)
 	return nil
 }
 
@@ -145,34 +107,13 @@ func (c *Client) UploadArtifact(taskID string, filePath string, description stri
 
 // WaitForInput は入力待ち状態を通知し、入力を待機します
 func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
-	// WebSocketクライアントの取得
-	wsClient, err := c.GetWebSocketClient(taskID)
+	// WebSocket機能は削除されたため、標準入力から入力を受け付ける
+	logger.WithTaskIDAndComponent("api").Info("標準入力からの入力を待機中...")
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
 	if err != nil {
-		logger.WithTaskIDAndComponent("api").WithError(err).Error("WebSocketクライアントの取得に失敗しました")
-		// WebSocketが使えない場合は標準入力から入力を受け付ける
-		logger.WithTaskIDAndComponent("api").Info("標準入力からの入力を待機中...")
-		reader := bufio.NewReader(os.Stdin)
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return "", fmt.Errorf("標準入力の読み取りに失敗: %w", err)
-		}
-		return input, nil
+		return "", fmt.Errorf("標準入力の読み取りに失敗: %w", err)
 	}
-
-	// WebSocketで入力待ち状態を通知し、入力を待機
-	input, err := wsClient.WaitForInput(prompt)
-	if err != nil {
-		logger.WithTaskIDAndComponent("api").WithError(err).Error("WebSocketでの入力待機に失敗しました")
-		// エラーが発生した場合は標準入力から入力を受け付ける
-		logger.WithTaskIDAndComponent("api").Info("標準入力からの入力を待機中...")
-		reader := bufio.NewReader(os.Stdin)
-		input, err := reader.ReadString('\n')
-		if err != nil {
-			return "", fmt.Errorf("標準入力の読み取りに失敗: %w", err)
-		}
-		return input, nil
-	}
-
 	return input, nil
 }
 
