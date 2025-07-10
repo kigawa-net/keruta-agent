@@ -88,7 +88,7 @@ type Client struct {
 type TaskStatus string
 
 const (
-	TaskStatusProcessing      TaskStatus = "PROCESSING"
+	TaskStatusProcessing      TaskStatus = "IN_PROGRESS"
 	TaskStatusCompleted       TaskStatus = "COMPLETED"
 	TaskStatusFailed          TaskStatus = "FAILED"
 	TaskStatusWaitingForInput TaskStatus = "WAITING_FOR_INPUT"
