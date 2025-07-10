@@ -167,12 +167,6 @@ func GetAPIURL() string {
 	return GlobalConfig.API.URL
 }
 
-// GetAPIToken はAPIトークンを取得します
-// 認証が不要になったため、常に空文字列を返します
-func GetAPIToken() string {
-	return ""
-}
-
 // GetTimeout はタイムアウトを取得します
 func GetTimeout() time.Duration {
 	return GlobalConfig.API.Timeout

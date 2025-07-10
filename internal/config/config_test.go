@@ -1,10 +1,10 @@
 package config
 
 import (
+	"github.com/spf13/viper"
 	"os"
 	"testing"
 	"time"
-	"github.com/spf13/viper"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -12,9 +12,9 @@ import (
 func TestSetDefaults(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
-	
+
 	setDefaults()
-	
+
 	assert.Equal(t, "30s", viper.GetString("api.timeout"))
 	assert.Equal(t, "INFO", viper.GetString("logging.level"))
 	assert.Equal(t, "json", viper.GetString("logging.format"))
@@ -28,7 +28,7 @@ func TestLoadFromEnv(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
 	setDefaults()
-	
+
 	// 環境変数を設定
 	os.Setenv("KERUTA_API_URL", "http://test-api.example.com")
 	os.Setenv("KERUTA_API_TOKEN", "test-token")
@@ -38,7 +38,7 @@ func TestLoadFromEnv(t *testing.T) {
 	os.Setenv("KERUTA_MAX_FILE_SIZE", "50")
 	os.Setenv("KERUTA_AUTO_FIX_ENABLED", "false")
 	os.Setenv("KERUTA_RETRY_COUNT", "5")
-	
+
 	defer func() {
 		os.Unsetenv("KERUTA_API_URL")
 		os.Unsetenv("KERUTA_API_TOKEN")
@@ -49,9 +49,9 @@ func TestLoadFromEnv(t *testing.T) {
 		os.Unsetenv("KERUTA_AUTO_FIX_ENABLED")
 		os.Unsetenv("KERUTA_RETRY_COUNT")
 	}()
-	
+
 	loadFromEnv()
-	
+
 	assert.Equal(t, "http://test-api.example.com", viper.GetString("api.url"))
 	assert.Equal(t, "test-token", viper.GetString("api.token"))
 	assert.Equal(t, "60s", viper.GetString("api.timeout"))
@@ -66,20 +66,20 @@ func TestLoadFromEnvInvalidValues(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
 	setDefaults()
-	
+
 	// 無効な値を設定
 	os.Setenv("KERUTA_MAX_FILE_SIZE", "invalid")
 	os.Setenv("KERUTA_AUTO_FIX_ENABLED", "invalid")
 	os.Setenv("KERUTA_RETRY_COUNT", "invalid")
-	
+
 	defer func() {
 		os.Unsetenv("KERUTA_MAX_FILE_SIZE")
 		os.Unsetenv("KERUTA_AUTO_FIX_ENABLED")
 		os.Unsetenv("KERUTA_RETRY_COUNT")
 	}()
-	
+
 	loadFromEnv()
-	
+
 	// デフォルト値が保持されることを確認
 	assert.Equal(t, int64(100*1024*1024), viper.GetInt64("artifacts.max_size"))
 	assert.Equal(t, true, viper.GetBool("error_handling.auto_fix"))
@@ -90,29 +90,28 @@ func TestValidateSuccess(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
 	setDefaults()
-	
+
 	// 必須設定を設定
 	viper.Set("api.url", "http://test-api.example.com")
 	viper.Set("api.token", "test-token")
-	
+
 	err := validate()
-	
+
 	assert.NoError(t, err)
 	assert.NotNil(t, GlobalConfig)
 	assert.Equal(t, "http://test-api.example.com", GlobalConfig.API.URL)
-	assert.Equal(t, "test-token", GlobalConfig.API.Token)
 }
 
 func TestValidateMissingAPIURL(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
 	setDefaults()
-	
+
 	// API URLを設定しない
 	viper.Set("api.token", "test-token")
-	
+
 	err := validate()
-	
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "KERUTA_API_URL が設定されていません")
 }
@@ -121,12 +120,12 @@ func TestValidateMissingAPIToken(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
 	setDefaults()
-	
+
 	// API Tokenを設定しない
 	viper.Set("api.url", "http://test-api.example.com")
-	
+
 	err := validate()
-	
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "KERUTA_API_TOKEN が設定されていません")
 }
@@ -135,7 +134,7 @@ func TestGetTaskID(t *testing.T) {
 	// 環境変数を設定
 	os.Setenv("KERUTA_TASK_ID", "test-task-123")
 	defer os.Unsetenv("KERUTA_TASK_ID")
-	
+
 	taskID := GetTaskID()
 	assert.Equal(t, "test-task-123", taskID)
 }
@@ -143,7 +142,7 @@ func TestGetTaskID(t *testing.T) {
 func TestGetTaskIDEmpty(t *testing.T) {
 	// 環境変数をクリア
 	os.Unsetenv("KERUTA_TASK_ID")
-	
+
 	taskID := GetTaskID()
 	assert.Equal(t, "", taskID)
 }
@@ -153,29 +152,14 @@ func TestGetAPIURL(t *testing.T) {
 	viper.Reset()
 	setDefaults()
 	viper.Set("api.url", "http://test-api.example.com")
-	
+
 	// GlobalConfigを設定
 	var config Config
 	viper.Unmarshal(&config)
 	GlobalConfig = &config
-	
+
 	url := GetAPIURL()
 	assert.Equal(t, "http://test-api.example.com", url)
-}
-
-func TestGetAPIToken(t *testing.T) {
-	// テスト用にviperをリセット
-	viper.Reset()
-	setDefaults()
-	viper.Set("api.token", "test-token-123")
-	
-	// GlobalConfigを設定
-	var config Config
-	viper.Unmarshal(&config)
-	GlobalConfig = &config
-	
-	token := GetAPIToken()
-	assert.Equal(t, "test-token-123", token)
 }
 
 func TestGetTimeout(t *testing.T) {
@@ -183,12 +167,12 @@ func TestGetTimeout(t *testing.T) {
 	viper.Reset()
 	setDefaults()
 	viper.Set("api.timeout", "45s")
-	
+
 	// GlobalConfigを設定
 	var config Config
 	viper.Unmarshal(&config)
 	GlobalConfig = &config
-	
+
 	timeout := GetTimeout()
 	assert.Equal(t, 45*time.Second, timeout)
 }
@@ -196,32 +180,31 @@ func TestGetTimeout(t *testing.T) {
 func TestInitSuccess(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
-	
+
 	// 環境変数を設定
 	os.Setenv("KERUTA_API_URL", "http://test-api.example.com")
 	os.Setenv("KERUTA_API_TOKEN", "test-token")
-	
+
 	defer func() {
 		os.Unsetenv("KERUTA_API_URL")
 		os.Unsetenv("KERUTA_API_TOKEN")
 	}()
-	
+
 	err := Init()
-	
+
 	assert.NoError(t, err)
 	assert.NotNil(t, GlobalConfig)
 	assert.Equal(t, "http://test-api.example.com", GlobalConfig.API.URL)
-	assert.Equal(t, "test-token", GlobalConfig.API.Token)
 }
 
 func TestInitFailure(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
-	
+
 	// 必須環境変数を設定しない
-	
+
 	err := Init()
-	
+
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "KERUTA_API_URL が設定されていません")
-} 
+}

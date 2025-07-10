@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"keruta-agent/internal/config"
 	"keruta-agent/internal/logger"
@@ -166,21 +167,96 @@ func (c *Client) UploadArtifact(taskID string, filePath string, description stri
 
 // WaitForInput は入力待ち状態を通知し、入力を待機します
 func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
-	// WebSocket機能は削除されたため、標準入力から入力を受け付ける
-	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
-		"taskID": taskID,
-		"prompt": prompt,
-	}).Info("標準入力からの入力を待機中...")
+	// 環境変数でHTTP入力モードを制御
+	useHTTP := os.Getenv("KERUTA_USE_HTTP_INPUT") == "true"
 
-	// プロンプトを表示
-	fmt.Printf("%s ", prompt)
+	if useHTTP {
+		// HTTP APIを使用して入力を待機
+		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
+			"taskID": taskID,
+			"prompt": prompt,
+		}).Info("HTTP APIを通じて入力を待機中...")
 
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("標準入力の読み取りに失敗 (taskID: %s, prompt: %s): %w", taskID, prompt, err)
+		// 入力待ち状態をAPIに通知
+		url := fmt.Sprintf("%s/api/v1/tasks/%s/input-request", c.baseURL, taskID)
+		reqBody := map[string]string{
+			"prompt": prompt,
+		}
+
+		jsonData, err := json.Marshal(reqBody)
+		if err != nil {
+			return "", fmt.Errorf("リクエストボディのマーシャルに失敗: %w", err)
+		}
+
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+		if err != nil {
+			return "", fmt.Errorf("リクエストの作成に失敗: %w", err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.httpClient.Do(req)
+		if err != nil {
+			logger.WithTaskIDAndComponent("api").WithError(err).Warning("入力リクエストの送信に失敗しました")
+		} else {
+			resp.Body.Close()
+		}
+
+		// 入力が提供されるまでポーリング
+		pollURL := fmt.Sprintf("%s/api/v1/tasks/%s/input", c.baseURL, taskID)
+		maxRetries := 12 * 60 * 24 * 7
+		for i := 0; i < maxRetries; i++ {
+			pollReq, err := http.NewRequest("GET", pollURL, nil)
+			if err != nil {
+				return "", fmt.Errorf("入力ポーリングリクエストの作成に失敗: %w", err)
+			}
+
+			pollReq.Header.Set("Content-Type", "application/json")
+			pollResp, err := c.httpClient.Do(pollReq)
+			if err != nil {
+				logger.WithTaskIDAndComponent("api").WithError(err).Warning("入力のポーリングに失敗しました、再試行します")
+				time.Sleep(5 * time.Second)
+				continue
+			}
+
+			// 入力が提供された場合
+			if pollResp.StatusCode == http.StatusOK {
+				var inputResp struct {
+					Input string `json:"input"`
+				}
+
+				if err := json.NewDecoder(pollResp.Body).Decode(&inputResp); err != nil {
+					pollResp.Body.Close()
+					return "", fmt.Errorf("入力レスポンスのデコードに失敗: %w", err)
+				}
+
+				pollResp.Body.Close()
+				logger.WithTaskIDAndComponent("api").Info("入力を受け取りました")
+				return inputResp.Input, nil
+			}
+
+			pollResp.Body.Close()
+			// 入力がまだ提供されていない場合は待機
+			time.Sleep(5 * time.Second)
+		}
+
+		return "", fmt.Errorf("入力待ちがタイムアウトしました")
+	} else {
+		// 標準入力から入力を受け付ける
+		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
+			"taskID": taskID,
+			"prompt": prompt,
+		}).Info("標準入力からの入力を待機中...")
+
+		// プロンプトを表示
+		fmt.Printf("%s ", prompt)
+
+		reader := bufio.NewReader(os.Stdin)
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			return "", fmt.Errorf("標準入力の読み取りに失敗 (taskID: %s, prompt: %s): %w", taskID, prompt, err)
+		}
+		return input, nil
 	}
-	return input, nil
 }
 
 // GetScript はタスクのスクリプトを取得します
