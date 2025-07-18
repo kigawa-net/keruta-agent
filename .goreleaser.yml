@@ -12,6 +12,9 @@ builds:
     goarch:
       - amd64
       - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
     env:
       - CGO_ENABLED=0
 
@@ -26,4 +29,4 @@ snapshot:
   name_template: "{{ .Tag }}-next"
 
 # Dockerイメージは作成しない（バイナリのみ）
-dockers: [] 
+dockers: []
