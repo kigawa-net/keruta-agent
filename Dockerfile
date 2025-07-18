@@ -41,4 +41,4 @@ RUN chmod +x keruta-agent
 ENV KERUTA_ARTIFACTS_DIR=/.keruta/doc
 
 # エントリーポイントを設定
-ENTRYPOINT ["./keruta-agent"] 
+ENTRYPOINT ["./keruta-agent"]
