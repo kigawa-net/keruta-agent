@@ -95,6 +95,10 @@ func TestValidateSuccess(t *testing.T) {
 	viper.Set("api.url", "http://test-api.example.com")
 	viper.Set("api.token", "test-token")
 
+	// 必須環境変数を設定
+	os.Setenv("KERUTA_TASK_ID", "test-task-123")
+	defer os.Unsetenv("KERUTA_TASK_ID")
+
 	err := validate()
 
 	assert.NoError(t, err)
@@ -110,24 +114,31 @@ func TestValidateMissingAPIURL(t *testing.T) {
 	// API URLを設定しない
 	viper.Set("api.token", "test-token")
 
+	// 必須環境変数を設定
+	os.Setenv("KERUTA_TASK_ID", "test-task-123")
+	defer os.Unsetenv("KERUTA_TASK_ID")
+
 	err := validate()
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "KERUTA_API_URL が設定されていません")
 }
 
-func TestValidateMissingAPIToken(t *testing.T) {
+func TestValidateMissingTaskID(t *testing.T) {
 	// テスト用にviperをリセット
 	viper.Reset()
 	setDefaults()
 
-	// API Tokenを設定しない
+	// API URLとTokenを設定
 	viper.Set("api.url", "http://test-api.example.com")
+	viper.Set("api.token", "test-token")
+
+	// KERUTA_TASK_IDを設定しない
 
 	err := validate()
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "KERUTA_API_TOKEN が設定されていません")
+	assert.Contains(t, err.Error(), "KERUTA_TASK_ID が設定されていません")
 }
 
 func TestGetTaskID(t *testing.T) {
@@ -184,10 +195,12 @@ func TestInitSuccess(t *testing.T) {
 	// 環境変数を設定
 	os.Setenv("KERUTA_API_URL", "http://test-api.example.com")
 	os.Setenv("KERUTA_API_TOKEN", "test-token")
+	os.Setenv("KERUTA_TASK_ID", "test-task-123")
 
 	defer func() {
 		os.Unsetenv("KERUTA_API_URL")
 		os.Unsetenv("KERUTA_API_TOKEN")
+		os.Unsetenv("KERUTA_TASK_ID")
 	}()
 
 	err := Init()

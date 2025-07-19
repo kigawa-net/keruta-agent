@@ -38,7 +38,7 @@ func TestUpdateTaskStatus(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// リクエストの検証
 		assert.Equal(t, "PUT", r.Method)
-		assert.Equal(t, "/api/tasks/test-task-123/status", r.URL.Path)
+		assert.Equal(t, "/api/v1/tasks/test-task-123/status", r.URL.Path)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
@@ -118,7 +118,7 @@ func TestSendLog(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// リクエストの検証
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/tasks/test-task-123/logs", r.URL.Path)
+		assert.Equal(t, "/api/v1/tasks/test-task-123/logs", r.URL.Path)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
@@ -179,7 +179,7 @@ func TestUploadArtifact(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// リクエストの検証
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/tasks/test-task-123/artifacts", r.URL.Path)
+		assert.Equal(t, "/api/v1/tasks/test-task-123/artifacts", r.URL.Path)
 		assert.Contains(t, r.Header.Get("Content-Type"), "multipart/form-data")
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
@@ -282,7 +282,7 @@ func TestCreateAutoFixTask(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// リクエストの検証
 		assert.Equal(t, "POST", r.Method)
-		assert.Equal(t, "/api/tasks/test-task-123/auto-fix", r.URL.Path)
+		assert.Equal(t, "/api/v1/tasks/test-task-123/auto-fix", r.URL.Path)
 		assert.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
@@ -339,7 +339,7 @@ func TestCreateAutoFixTaskFailure(t *testing.T) {
 }
 
 func TestTaskStatusConstants(t *testing.T) {
-	assert.Equal(t, TaskStatus("PROCESSING"), TaskStatusProcessing)
+	assert.Equal(t, TaskStatus("IN_PROGRESS"), TaskStatusProcessing)
 	assert.Equal(t, TaskStatus("COMPLETED"), TaskStatusCompleted)
 	assert.Equal(t, TaskStatus("FAILED"), TaskStatusFailed)
 }
@@ -380,4 +380,4 @@ func TestLogRequest(t *testing.T) {
 
 	assert.Equal(t, req.Level, unmarshaled.Level)
 	assert.Equal(t, req.Message, unmarshaled.Message)
-} 
+}

@@ -81,6 +81,7 @@ func logAPIError(method, url string, reqHeaders map[string]string, reqBody inter
 // Client はkeruta APIクライアントです
 type Client struct {
 	baseURL    string
+	token      string
 	httpClient *http.Client
 }
 
@@ -127,6 +128,7 @@ type ScriptResponse struct {
 func NewClient() *Client {
 	return &Client{
 		baseURL: config.GetAPIURL(),
+		token:   config.GetAPIToken(),
 		httpClient: &http.Client{
 			Timeout: config.GetTimeout(),
 		},
@@ -194,6 +196,12 @@ func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
 		}
 
 		req.Header.Set("Content-Type", "application/json")
+		if c.token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
+		if c.token != "" {
+			req.Header.Set("Authorization", "Bearer "+c.token)
+		}
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			logger.WithTaskIDAndComponent("api").WithError(err).Warning("入力リクエストの送信に失敗しました")
@@ -211,6 +219,9 @@ func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
 			}
 
 			pollReq.Header.Set("Content-Type", "application/json")
+			if c.token != "" {
+				pollReq.Header.Set("Authorization", "Bearer "+c.token)
+			}
 			pollResp, err := c.httpClient.Do(pollReq)
 			if err != nil {
 				logger.WithTaskIDAndComponent("api").WithError(err).Warning("入力のポーリングに失敗しました、再試行します")
@@ -286,6 +297,9 @@ func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
 		"errorMessage": errorMessage,

@@ -16,13 +16,15 @@ import (
 // HTTPClient はHTTP APIクライアントを表します
 type HTTPClient struct {
 	baseURL    string
+	token      string
 	httpClient *http.Client
 }
 
 // NewHTTPClient は新しいHTTP APIクライアントを作成します
-func NewHTTPClient(baseURL string, timeout time.Duration) *HTTPClient {
+func NewHTTPClient(baseURL string, token string, timeout time.Duration) *HTTPClient {
 	return &HTTPClient{
 		baseURL: baseURL,
+		token:   token,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -51,6 +53,9 @@ func (c *HTTPClient) UpdateTaskStatus(taskID string, status TaskStatus, message 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
 		"url":     url,
@@ -94,6 +99,9 @@ func (c *HTTPClient) SendLog(taskID string, level string, message string) error 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -116,6 +124,9 @@ func (c *HTTPClient) GetScript(taskID string) (*Script, error) {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	logger.WithTaskIDAndComponent("api").WithField("taskID", taskID).Debug("スクリプトを取得中")
 
@@ -165,6 +176,9 @@ func (c *HTTPClient) WaitForInput(taskID string, prompt string) (string, error) 
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
 		"taskID": taskID,

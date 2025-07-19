@@ -177,7 +177,12 @@ func (c *Checker) CheckConfig() CheckResult {
 		}
 	}
 
-	// API認証は不要になったため、トークンのチェックは行わない
+	if config.GetAPIToken() == "" {
+		return CheckResult{
+			Status:  false,
+			Message: "APIトークンが設定されていません",
+		}
+	}
 
 	if config.GetTaskID() == "" {
 		return CheckResult{

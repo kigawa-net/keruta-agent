@@ -32,6 +32,9 @@ func sendLogHTTP(client *Client, taskID string, level string, message string) er
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if client.token != "" {
+		req.Header.Set("Authorization", "Bearer "+client.token)
+	}
 
 	logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
 		"level":   level,

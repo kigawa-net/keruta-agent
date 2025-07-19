@@ -21,6 +21,7 @@ type Config struct {
 // APIConfig はAPI関連の設定を表します
 type APIConfig struct {
 	URL     string        `mapstructure:"url"`
+	Token   string        `mapstructure:"token"`
 	Timeout time.Duration `mapstructure:"timeout"`
 }
 
@@ -85,6 +86,9 @@ func loadFromEnv() {
 	// API設定
 	if url := os.Getenv("KERUTA_API_URL"); url != "" {
 		viper.Set("api.url", url)
+	}
+	if token := os.Getenv("KERUTA_API_TOKEN"); token != "" {
+		viper.Set("api.token", token)
 	}
 	if timeout := os.Getenv("KERUTA_TIMEOUT"); timeout != "" {
 		viper.Set("api.timeout", timeout)
@@ -170,4 +174,9 @@ func GetAPIURL() string {
 // GetTimeout はタイムアウトを取得します
 func GetTimeout() time.Duration {
 	return GlobalConfig.API.Timeout
+}
+
+// GetAPIToken はAPIトークンを取得します
+func GetAPIToken() string {
+	return GlobalConfig.API.Token
 }
