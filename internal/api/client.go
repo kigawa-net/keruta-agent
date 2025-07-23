@@ -124,6 +124,19 @@ type ScriptResponse struct {
 	Script  Script `json:"script"`
 }
 
+// Task はタスク情報を表します
+type Task struct {
+	ID          string                 `json:"id"`
+	Name        string                 `json:"name"`
+	Description string                 `json:"description"`
+	Status      TaskStatus             `json:"status"`
+	WorkspaceID string                 `json:"workspaceId"`
+	Script      string                 `json:"script"`
+	Parameters  map[string]interface{} `json:"parameters"`
+	CreatedAt   string                 `json:"createdAt"`
+	UpdatedAt   string                 `json:"updatedAt"`
+}
+
 // NewClient は新しいAPIクライアントを作成します
 func NewClient() *Client {
 	return &Client{
@@ -199,14 +212,13 @@ func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
 		if c.token != "" {
 			req.Header.Set("Authorization", "Bearer "+c.token)
 		}
-		if c.token != "" {
-			req.Header.Set("Authorization", "Bearer "+c.token)
-		}
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			logger.WithTaskIDAndComponent("api").WithError(err).Warning("入力リクエストの送信に失敗しました")
 		} else {
-			resp.Body.Close()
+			if closeErr := resp.Body.Close(); closeErr != nil {
+				logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+			}
 		}
 
 		// 入力が提供されるまでポーリング
@@ -236,16 +248,22 @@ func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
 				}
 
 				if err := json.NewDecoder(pollResp.Body).Decode(&inputResp); err != nil {
-					pollResp.Body.Close()
+					if closeErr := pollResp.Body.Close(); closeErr != nil {
+						logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("ポーリングレスポンスボディのクローズに失敗しました")
+					}
 					return "", fmt.Errorf("入力レスポンスのデコードに失敗: %w", err)
 				}
 
-				pollResp.Body.Close()
+				if closeErr := pollResp.Body.Close(); closeErr != nil {
+					logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("ポーリングレスポンスボディのクローズに失敗しました")
+				}
 				logger.WithTaskIDAndComponent("api").Info("入力を受け取りました")
 				return inputResp.Input, nil
 			}
 
-			pollResp.Body.Close()
+			if closeErr := pollResp.Body.Close(); closeErr != nil {
+				logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("ポーリングレスポンスボディのクローズに失敗しました")
+			}
 			// 入力がまだ提供されていない場合は待機
 			time.Sleep(5 * time.Second)
 		}
@@ -273,6 +291,67 @@ func (c *Client) WaitForInput(taskID string, prompt string) (string, error) {
 // GetScript はタスクのスクリプトを取得します
 func (c *Client) GetScript(taskID string) (*Script, error) {
 	return getScriptHTTP(c, taskID)
+}
+
+// GetPendingTasksForWorkspace はワークスペース用の保留中タスクを取得します
+func (c *Client) GetPendingTasksForWorkspace(workspaceID string) ([]*Task, error) {
+	url := fmt.Sprintf("%s/api/v1/workspaces/%s/tasks/pending", c.baseURL, workspaceID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("リクエストの作成に失敗: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API呼び出しに失敗: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var tasks []*Task
+	if err := json.NewDecoder(resp.Body).Decode(&tasks); err != nil {
+		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w", err)
+	}
+
+	return tasks, nil
+}
+
+// StartTask はタスクを開始します
+func (c *Client) StartTask(taskID string) error {
+	return c.UpdateTaskStatus(taskID, TaskStatusProcessing, "タスクを開始しました", 0, "")
+}
+
+// SuccessTask はタスクを成功として完了します
+func (c *Client) SuccessTask(taskID string, message string) error {
+	return c.UpdateTaskStatus(taskID, TaskStatusCompleted, message, 100, "")
+}
+
+// FailTask はタスクを失敗として完了します
+func (c *Client) FailTask(taskID string, message string, errorCode string) error {
+	return c.UpdateTaskStatus(taskID, TaskStatusFailed, message, 0, errorCode)
+}
+
+// GetTaskScript はタスクのスクリプトを取得します
+func (c *Client) GetTaskScript(taskID string) (string, error) {
+	script, err := c.GetScript(taskID)
+	if err != nil {
+		return "", err
+	}
+	return script.Content, nil
 }
 
 // CreateAutoFixTask は自動修正タスクを作成します

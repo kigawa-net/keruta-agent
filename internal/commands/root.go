@@ -29,7 +29,9 @@ var rootCmd = &cobra.Command{
 
 		// タスクIDの設定
 		if taskID != "" {
-			os.Setenv("KERUTA_TASK_ID", taskID)
+			if err := os.Setenv("KERUTA_TASK_ID", taskID); err != nil {
+				logger.WithTaskID().WithError(err).Error("環境変数KERUTA_TASK_IDの設定に失敗しました")
+			}
 		}
 
 		logger.WithTaskID().Debug("keruta-agentを開始しました")
@@ -56,6 +58,7 @@ func init() {
 	rootCmd.AddCommand(artifactCmd)
 	rootCmd.AddCommand(healthCmd)
 	rootCmd.AddCommand(configCmd)
+	rootCmd.AddCommand(daemonCmd)
 
 	// ヘルプテンプレートの設定
 	rootCmd.SetHelpTemplate(`{{with (or .Long .Short)}}{{. | trimTrailingWhitespaces}}
