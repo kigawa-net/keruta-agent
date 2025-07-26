@@ -147,8 +147,17 @@ func validate() error {
 	if viper.GetString("api.url") == "" {
 		return fmt.Errorf("KERUTA_API_URL が設定されていません")
 	}
+	
+	// デーモンモード以外では KERUTA_TASK_ID が必須
+	// デーモンモードではセッションIDまたはワークスペースIDが必要
 	if os.Getenv("KERUTA_TASK_ID") == "" {
-		return fmt.Errorf("KERUTA_TASK_ID が設定されていません")
+		sessionID := os.Getenv("KERUTA_SESSION_ID")
+		workspaceID := os.Getenv("KERUTA_WORKSPACE_ID")
+		coderWorkspaceID := os.Getenv("CODER_WORKSPACE_ID")
+		
+		if sessionID == "" && workspaceID == "" && coderWorkspaceID == "" {
+			return fmt.Errorf("KERUTA_TASK_ID、KERUTA_SESSION_ID、またはKERUTA_WORKSPACE_ID のいずれかが設定されている必要があります")
+		}
 	}
 
 	// 設定を構造体にマッピング
@@ -179,4 +188,41 @@ func GetTimeout() time.Duration {
 // GetAPIToken はAPIトークンを取得します
 func GetAPIToken() string {
 	return GlobalConfig.API.Token
+}
+
+// GetSessionID はセッションIDを取得します
+func GetSessionID() string {
+	return os.Getenv("KERUTA_SESSION_ID")
+}
+
+// GetWorkspaceID はワークスペースIDを取得します
+func GetWorkspaceID() string {
+	if workspaceID := os.Getenv("KERUTA_WORKSPACE_ID"); workspaceID != "" {
+		return workspaceID
+	}
+	// レガシーサポート
+	return os.Getenv("CODER_WORKSPACE_ID")
+}
+
+// GetPollInterval はポーリング間隔を取得します
+func GetPollInterval() time.Duration {
+	if interval := os.Getenv("KERUTA_POLL_INTERVAL"); interval != "" {
+		if duration, err := time.ParseDuration(interval + "s"); err == nil {
+			return duration
+		}
+	}
+	return 5 * time.Second // デフォルト値
+}
+
+// GetUseHTTPInput はHTTP入力機能の有効状態を取得します
+func GetUseHTTPInput() bool {
+	return os.Getenv("KERUTA_USE_HTTP_INPUT") == "true"
+}
+
+// GetDaemonPort はデーモンHTTPポートを取得します
+func GetDaemonPort() string {
+	if port := os.Getenv("KERUTA_DAEMON_PORT"); port != "" {
+		return port
+	}
+	return "8080" // デフォルト値
 }
