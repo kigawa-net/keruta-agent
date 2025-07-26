@@ -1,8 +1,11 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"strconv"
 	"time"
@@ -155,8 +158,20 @@ func validate() error {
 		workspaceID := os.Getenv("KERUTA_WORKSPACE_ID")
 		coderWorkspaceID := os.Getenv("CODER_WORKSPACE_ID")
 		
-		if sessionID == "" && workspaceID == "" && coderWorkspaceID == "" {
+		// セッションIDまたはワークスペースIDのいずれかが設定されている必要がある
+		// ワークスペースIDからセッションIDを動的に取得できる場合もOK
+		hasSessionID := sessionID != ""
+		hasWorkspaceID := workspaceID != "" || coderWorkspaceID != ""
+		
+		if !hasSessionID && !hasWorkspaceID {
 			return fmt.Errorf("KERUTA_TASK_ID、KERUTA_SESSION_ID、またはKERUTA_WORKSPACE_ID のいずれかが設定されている必要があります")
+		}
+		
+		// ワークスペースIDが設定されているがセッションIDが設定されていない場合、
+		// 動的にセッションIDを取得を試みる（API URLが設定されている場合のみ）
+		if !hasSessionID && hasWorkspaceID && viper.GetString("api.url") != "" {
+			// ここでは検証のみ行い、実際の取得はGetSessionID()で行う
+			// API URLが設定されていれば、後でセッションIDを取得できる可能性がある
 		}
 	}
 
@@ -192,7 +207,55 @@ func GetAPIToken() string {
 
 // GetSessionID はセッションIDを取得します
 func GetSessionID() string {
-	return os.Getenv("KERUTA_SESSION_ID")
+	if sessionID := os.Getenv("KERUTA_SESSION_ID"); sessionID != "" {
+		return sessionID
+	}
+	
+	// KERUTA_SESSION_IDが設定されていない場合、ワークスペースIDからセッションIDを取得
+	workspaceID := GetWorkspaceID()
+	if workspaceID != "" {
+		if sessionID := getSessionIDFromWorkspace(workspaceID); sessionID != "" {
+			return sessionID
+		}
+	}
+	
+	return ""
+}
+
+// getSessionIDFromWorkspace はワークスペースIDからセッションIDを取得します
+func getSessionIDFromWorkspace(workspaceID string) string {
+	apiURL := GetAPIURL()
+	if apiURL == "" {
+		return ""
+	}
+	
+	url := fmt.Sprintf("%s/api/v1/sessions/by-workspace/%s", apiURL, workspaceID)
+	
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return ""
+	}
+	
+	var session struct {
+		ID string `json:"id"`
+	}
+	
+	if err := json.Unmarshal(body, &session); err != nil {
+		return ""
+	}
+	
+	return session.ID
 }
 
 // GetWorkspaceID はワークスペースIDを取得します
