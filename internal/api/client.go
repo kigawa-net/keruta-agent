@@ -295,13 +295,26 @@ func (c *Client) GetScript(taskID string) (*Script, error) {
 
 // Session はセッション情報を表します
 type Session struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	Status      string     `json:"status"`
-	WorkspaceID string     `json:"workspaceId"`
-	CreatedAt   string     `json:"createdAt"`
-	UpdatedAt   string     `json:"updatedAt"`
+	ID             string                  `json:"id"`
+	Name           string                  `json:"name"`
+	Description    string                  `json:"description"`
+	Status         string                  `json:"status"`
+	WorkspaceID    string                  `json:"workspaceId"`
+	Tags           []string                `json:"tags"`
+	Metadata       map[string]string       `json:"metadata"`
+	TemplateConfig *SessionTemplateConfig  `json:"templateConfig"`
+	CreatedAt      string                  `json:"createdAt"`
+	UpdatedAt      string                  `json:"updatedAt"`
+}
+
+type SessionTemplateConfig struct {
+	TemplateID         string            `json:"templateId"`
+	TemplateName       string            `json:"templateName"`
+	RepositoryURL      string            `json:"repositoryUrl"`
+	RepositoryRef      string            `json:"repositoryRef"`
+	TemplatePath       string            `json:"templatePath"`
+	PreferredKeywords  []string          `json:"preferredKeywords"`
+	Parameters         map[string]string `json:"parameters"`
 }
 
 // GetSession はセッション情報を取得します

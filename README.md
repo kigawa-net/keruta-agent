@@ -19,6 +19,7 @@
 
 ### 主な機能
 - **セッション連携** - ワークスペースに対応するセッションのタスクを順次実行
+- **Gitリポジトリ管理** - セッションのテンプレート設定に基づくGitリポジトリの自動クローン/プル
 - **デーモンモード実行** - Coderワークスペース内でバックグラウンド実行
 - **タスクキュー処理** - セッション内のタスクを一つずつ順次処理
 - **タスクステータス管理** - タスクステータスの更新（PENDING → PROCESSING → COMPLETED/FAILED）
@@ -334,6 +335,9 @@ keruta config set <key> <value>
 | `KERUTA_DAEMON_PORT` | デーモンHTTPポート | `8080` |
 | `KERUTA_POLL_INTERVAL` | タスクポーリング間隔（秒） | `5` |
 | `KERUTA_MAX_CONCURRENT_TASKS` | 最大同時実行タスク数（常に1） | `1` |
+| `KERUTA_WORKING_DIR` | タスク実行時の作業ディレクトリ | 自動設定 |
+| `KERUTA_BASE_DIR` | ベースディレクトリ | `$HOME/.keruta` または `/tmp/keruta` |
+| `CODER_WORKSPACE_ID` | Coderワークスペース自動検出用 | 自動設定 |
 
 ## セットアップ
 

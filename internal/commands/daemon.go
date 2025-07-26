@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"keruta-agent/internal/api"
+	"keruta-agent/internal/git"
 	"keruta-agent/internal/logger"
 
 	"github.com/sirupsen/logrus"
@@ -91,6 +93,18 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 
 	// APIクライアントの初期化
 	apiClient := api.NewClient()
+
+	// Gitコマンドの利用可能性を確認
+	if err := git.ValidateGitCommand(); err != nil {
+		daemonLogger.WithError(err).Warn("Gitコマンドが利用できません。リポジトリ機能は無効になります")
+	}
+
+	// セッションの情報を取得してGitリポジトリを初期化
+	if daemonSessionID != "" {
+		if err := initializeRepositoryForSession(apiClient, daemonSessionID, daemonLogger); err != nil {
+			daemonLogger.WithError(err).Error("リポジトリの初期化に失敗しました")
+		}
+	}
 
 	// デーモンの開始情報をログ出力
 	daemonLogger.WithFields(logrus.Fields{
@@ -292,6 +306,16 @@ func executeScript(ctx context.Context, apiClient *api.Client, taskID string, sc
 	// スクリプトを実行
 	cmd := exec.CommandContext(ctx, "/bin/bash", tmpFile.Name())
 	
+	// 作業ディレクトリを設定（環境変数KERUTA_WORKING_DIRが設定されている場合）
+	if workDir := os.Getenv("KERUTA_WORKING_DIR"); workDir != "" {
+		if _, err := os.Stat(workDir); err == nil {
+			cmd.Dir = workDir
+			scriptLogger.WithField("working_dir", workDir).Debug("作業ディレクトリを設定しました")
+		} else {
+			scriptLogger.WithField("working_dir", workDir).Warn("作業ディレクトリが存在しません")
+		}
+	}
+	
 	// 標準出力・標準エラーのパイプを作成
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -369,6 +393,93 @@ func removePIDFile(pidFile string) {
 	if err := os.Remove(pidFile); err != nil {
 		logrus.WithError(err).WithField("pid_file", pidFile).Error("PIDファイルの削除に失敗しました")
 	}
+}
+
+// initializeRepositoryForSession はセッションのGitリポジトリを初期化します
+func initializeRepositoryForSession(apiClient *api.Client, sessionID string, logger *logrus.Entry) error {
+	logger.Info("🔧 セッションのリポジトリ情報を取得しています...")
+
+	// セッション情報を取得
+	session, err := apiClient.GetSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("セッション情報の取得に失敗: %w", err)
+	}
+
+	// テンプレート設定がない場合はスキップ
+	if session.TemplateConfig == nil {
+		logger.Debug("セッションにテンプレート設定がないため、リポジトリ初期化をスキップします")
+		return nil
+	}
+
+	templateConfig := session.TemplateConfig
+
+	// リポジトリURLがない場合はスキップ
+	if templateConfig.RepositoryURL == "" {
+		logger.Debug("リポジトリURLが設定されていないため、リポジトリ初期化をスキップします")
+		return nil
+	}
+
+	// 作業ディレクトリのパスを決定
+	workDir := determineWorkingDirectory(sessionID, templateConfig)
+	
+	logger.WithFields(logrus.Fields{
+		"repository_url": templateConfig.RepositoryURL,
+		"repository_ref": templateConfig.RepositoryRef,
+		"working_dir":    workDir,
+	}).Info("📂 Gitリポジトリを初期化しています...")
+
+	// Gitリポジトリを作成
+	repo := git.NewRepository(
+		templateConfig.RepositoryURL,
+		templateConfig.RepositoryRef,
+		workDir,
+		logger.WithField("component", "git"),
+	)
+
+	// クローンまたはプル実行
+	if err := repo.CloneOrPull(); err != nil {
+		return fmt.Errorf("リポジトリのクローン/プルに失敗: %w", err)
+	}
+
+	// 環境変数にワーキングディレクトリを設定
+	if err := os.Setenv("KERUTA_WORKING_DIR", workDir); err != nil {
+		logger.WithError(err).Warn("環境変数KERUTA_WORKING_DIRの設定に失敗しました")
+	}
+
+	logger.WithField("working_dir", workDir).Info("✅ リポジトリの初期化が完了しました")
+	return nil
+}
+
+// determineWorkingDirectory は作業ディレクトリのパスを決定します
+func determineWorkingDirectory(sessionID string, templateConfig *api.SessionTemplateConfig) string {
+	// 環境変数で作業ディレクトリが指定されている場合はそれを使用
+	if workDir := os.Getenv("KERUTA_WORKING_DIR"); workDir != "" {
+		return workDir
+	}
+
+	// デフォルトのベースディレクトリを決定
+	baseDir := os.Getenv("KERUTA_BASE_DIR")
+	if baseDir == "" {
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			baseDir = filepath.Join(homeDir, ".keruta")
+		} else {
+			baseDir = "/tmp/keruta"
+		}
+	}
+
+	// セッションごとのディレクトリを作成
+	sessionDir := filepath.Join(baseDir, "sessions", sessionID)
+	
+	// リポジトリ名を抽出（URLの最後の部分）
+	repoName := "repository"
+	if templateConfig.RepositoryURL != "" {
+		parts := strings.Split(strings.TrimSuffix(templateConfig.RepositoryURL, ".git"), "/")
+		if len(parts) > 0 {
+			repoName = parts[len(parts)-1]
+		}
+	}
+
+	return filepath.Join(sessionDir, repoName)
 }
 
 func init() {

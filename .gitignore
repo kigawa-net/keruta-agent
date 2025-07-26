@@ -2,3 +2,4 @@
 /cmd/keruta-agent/keruta-agent
 /pkg/
 /keruta-agent-bin
+/bin/keruta-agent
