@@ -138,7 +138,7 @@ func TestValidateMissingTaskID(t *testing.T) {
 	err := validate()
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "KERUTA_TASK_ID が設定されていません")
+	assert.Contains(t, err.Error(), "KERUTA_TASK_ID、KERUTA_SESSION_ID、またはKERUTA_WORKSPACE_ID のいずれかが設定されている必要があります")
 }
 
 func TestGetTaskID(t *testing.T) {

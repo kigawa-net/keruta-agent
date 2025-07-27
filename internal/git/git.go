@@ -60,44 +60,44 @@ func (r *Repository) CloneOrPull() error {
 // clone はリポジトリをクローンします
 func (r *Repository) clone() error {
 	r.logger.WithFields(logrus.Fields{
-		"url": r.URL,
-		"ref": r.Ref,
+		"url":  r.URL,
+		"ref":  r.Ref,
 		"path": r.Path,
 	}).Info("🔄 Gitリポジトリをクローンしています...")
 
 	// git clone コマンドを実行
 	args := []string{"clone"}
-	
+
 	// 特定のブランチ/タグを指定
 	if r.Ref != "" && r.Ref != "main" && r.Ref != "master" {
 		args = append(args, "--branch", r.Ref)
 	}
-	
+
 	args = append(args, r.URL, r.Path)
-	
+
 	cmd := exec.Command("git", args...)
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		r.logger.WithError(err).WithField("output", string(output)).Error("Gitクローンに失敗しました")
 		return fmt.Errorf("gitクローンに失敗: %w\n出力: %s", err, string(output))
 	}
 
 	r.logger.Info("✅ Gitリポジトリのクローンが完了しました")
-	
+
 	// クローン後に指定されたrefにチェックアウト（main/master以外の場合）
 	if r.Ref != "" && r.Ref != "main" && r.Ref != "master" {
 		return r.checkout()
 	}
-	
+
 	return nil
 }
 
 // pull はリポジトリをプルします
 func (r *Repository) pull() error {
 	r.logger.WithFields(logrus.Fields{
-		"url": r.URL,
-		"ref": r.Ref,
+		"url":  r.URL,
+		"ref":  r.Ref,
 		"path": r.Path,
 	}).Info("🔄 Gitリポジトリをプルしています...")
 
@@ -131,7 +131,7 @@ func (r *Repository) pull() error {
 	// プル実行
 	cmd := exec.Command("git", "pull")
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		r.logger.WithError(err).WithField("output", string(output)).Error("Gitプルに失敗しました")
 		return fmt.Errorf("gitプルに失敗: %w\n出力: %s", err, string(output))
@@ -144,15 +144,15 @@ func (r *Repository) pull() error {
 // fetch はリモートの情報を取得します
 func (r *Repository) fetch() error {
 	r.logger.Debug("リモートの情報を取得しています...")
-	
+
 	cmd := exec.Command("git", "fetch", "--all")
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		r.logger.WithError(err).WithField("output", string(output)).Error("Git fetchに失敗しました")
 		return fmt.Errorf("git fetchに失敗: %w\n出力: %s", err, string(output))
 	}
-	
+
 	return nil
 }
 
@@ -163,18 +163,18 @@ func (r *Repository) checkout() error {
 	}
 
 	r.logger.WithField("ref", r.Ref).Debug("指定されたrefにチェックアウトしています...")
-	
+
 	cmd := exec.Command("git", "checkout", r.Ref)
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		r.logger.WithError(err).WithFields(logrus.Fields{
-			"ref": r.Ref,
+			"ref":    r.Ref,
 			"output": string(output),
 		}).Error("Git checkoutに失敗しました")
 		return fmt.Errorf("git checkout %s に失敗: %w\n出力: %s", r.Ref, err, string(output))
 	}
-	
+
 	r.logger.WithField("ref", r.Ref).Info("指定されたrefにチェックアウトしました")
 	return nil
 }
@@ -218,12 +218,55 @@ func (r *Repository) GetWorkingDirectory() string {
 func ValidateGitCommand() error {
 	cmd := exec.Command("git", "--version")
 	output, err := cmd.CombinedOutput()
-	
+
 	if err != nil {
 		return fmt.Errorf("gitコマンドが見つかりません。Gitがインストールされていることを確認してください: %w\n出力: %s", err, string(output))
 	}
-	
+
 	version := strings.TrimSpace(string(output))
 	logrus.WithField("version", version).Debug("Gitコマンドが利用可能です")
 	return nil
+}
+
+// SessionTemplateConfig はセッションテンプレートの設定を表します
+type SessionTemplateConfig struct {
+	TemplateID        string            `json:"templateId"`
+	TemplateName      string            `json:"templateName"`
+	RepositoryURL     string            `json:"repositoryUrl"`
+	RepositoryRef     string            `json:"repositoryRef"`
+	TemplatePath      string            `json:"templatePath"`
+	PreferredKeywords []string          `json:"preferredKeywords"`
+	Parameters        map[string]string `json:"parameters"`
+}
+
+// DetermineWorkingDirectory は作業ディレクトリのパスを決定します
+func DetermineWorkingDirectory(sessionID string, templateConfig *SessionTemplateConfig) string {
+	// 環境変数で作業ディレクトリが指定されている場合はそれを使用
+	if workDir := os.Getenv("KERUTA_WORKING_DIR"); workDir != "" {
+		return workDir
+	}
+
+	// デフォルトのベースディレクトリを決定
+	baseDir := os.Getenv("KERUTA_BASE_DIR")
+	if baseDir == "" {
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			baseDir = filepath.Join(homeDir, ".keruta")
+		} else {
+			baseDir = "/tmp/keruta"
+		}
+	}
+
+	// セッションごとのディレクトリを作成
+	sessionDir := filepath.Join(baseDir, "sessions", sessionID)
+
+	// リポジトリ名を抽出（URLの最後の部分）
+	repoName := "repository"
+	if templateConfig != nil && templateConfig.RepositoryURL != "" {
+		parts := strings.Split(strings.TrimSuffix(templateConfig.RepositoryURL, ".git"), "/")
+		if len(parts) > 0 {
+			repoName = parts[len(parts)-1]
+		}
+	}
+
+	return filepath.Join(sessionDir, repoName)
 }

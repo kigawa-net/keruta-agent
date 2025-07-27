@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -21,11 +20,11 @@ import (
 )
 
 var (
-	daemonInterval    time.Duration
-	daemonPidFile     string
-	daemonLogFile     string
-	daemonWorkspaceID string
-	daemonSessionID   string
+	daemonInterval     time.Duration
+	daemonPidFile      string
+	daemonLogFile      string
+	daemonWorkspaceID  string
+	daemonSessionID    string
 	daemonPollInterval time.Duration
 )
 
@@ -305,7 +304,7 @@ func executeScript(ctx context.Context, apiClient *api.Client, taskID string, sc
 
 	// スクリプトを実行
 	cmd := exec.CommandContext(ctx, "/bin/bash", tmpFile.Name())
-	
+
 	// 作業ディレクトリを設定（環境変数KERUTA_WORKING_DIRが設定されている場合）
 	if workDir := os.Getenv("KERUTA_WORKING_DIR"); workDir != "" {
 		if _, err := os.Stat(workDir); err == nil {
@@ -315,7 +314,7 @@ func executeScript(ctx context.Context, apiClient *api.Client, taskID string, sc
 			scriptLogger.WithField("working_dir", workDir).Warn("作業ディレクトリが存在しません")
 		}
 	}
-	
+
 	// 標準出力・標準エラーのパイプを作成
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -420,8 +419,17 @@ func initializeRepositoryForSession(apiClient *api.Client, sessionID string, log
 	}
 
 	// 作業ディレクトリのパスを決定
-	workDir := determineWorkingDirectory(sessionID, templateConfig)
-	
+	gitTemplateConfig := &git.SessionTemplateConfig{
+		TemplateID:        templateConfig.TemplateID,
+		TemplateName:      templateConfig.TemplateName,
+		RepositoryURL:     templateConfig.RepositoryURL,
+		RepositoryRef:     templateConfig.RepositoryRef,
+		TemplatePath:      templateConfig.TemplatePath,
+		PreferredKeywords: templateConfig.PreferredKeywords,
+		Parameters:        templateConfig.Parameters,
+	}
+	workDir := git.DetermineWorkingDirectory(sessionID, gitTemplateConfig)
+
 	logger.WithFields(logrus.Fields{
 		"repository_url": templateConfig.RepositoryURL,
 		"repository_ref": templateConfig.RepositoryRef,
@@ -448,38 +456,6 @@ func initializeRepositoryForSession(apiClient *api.Client, sessionID string, log
 
 	logger.WithField("working_dir", workDir).Info("✅ リポジトリの初期化が完了しました")
 	return nil
-}
-
-// determineWorkingDirectory は作業ディレクトリのパスを決定します
-func determineWorkingDirectory(sessionID string, templateConfig *api.SessionTemplateConfig) string {
-	// 環境変数で作業ディレクトリが指定されている場合はそれを使用
-	if workDir := os.Getenv("KERUTA_WORKING_DIR"); workDir != "" {
-		return workDir
-	}
-
-	// デフォルトのベースディレクトリを決定
-	baseDir := os.Getenv("KERUTA_BASE_DIR")
-	if baseDir == "" {
-		if homeDir, err := os.UserHomeDir(); err == nil {
-			baseDir = filepath.Join(homeDir, ".keruta")
-		} else {
-			baseDir = "/tmp/keruta"
-		}
-	}
-
-	// セッションごとのディレクトリを作成
-	sessionDir := filepath.Join(baseDir, "sessions", sessionID)
-	
-	// リポジトリ名を抽出（URLの最後の部分）
-	repoName := "repository"
-	if templateConfig.RepositoryURL != "" {
-		parts := strings.Split(strings.TrimSuffix(templateConfig.RepositoryURL, ".git"), "/")
-		if len(parts) > 0 {
-			repoName = parts[len(parts)-1]
-		}
-	}
-
-	return filepath.Join(sessionDir, repoName)
 }
 
 func init() {
