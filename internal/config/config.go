@@ -157,14 +157,15 @@ func validate() error {
 		sessionID := os.Getenv("KERUTA_SESSION_ID")
 		workspaceID := os.Getenv("KERUTA_WORKSPACE_ID")
 		coderWorkspaceID := os.Getenv("CODER_WORKSPACE_ID")
+		coderWorkspaceName := os.Getenv("CODER_WORKSPACE_NAME")
 		
 		// セッションIDまたはワークスペースIDのいずれかが設定されている必要がある
 		// ワークスペースIDからセッションIDを動的に取得できる場合もOK
 		hasSessionID := sessionID != ""
-		hasWorkspaceID := workspaceID != "" || coderWorkspaceID != ""
+		hasWorkspaceID := workspaceID != "" || coderWorkspaceID != "" || coderWorkspaceName != ""
 		
 		if !hasSessionID && !hasWorkspaceID {
-			return fmt.Errorf("KERUTA_TASK_ID、KERUTA_SESSION_ID、またはKERUTA_WORKSPACE_ID のいずれかが設定されている必要があります")
+			return fmt.Errorf("KERUTA_TASK_ID、KERUTA_SESSION_ID、KERUTA_WORKSPACE_ID、CODER_WORKSPACE_ID、またはCODER_WORKSPACE_NAME のいずれかが設定されている必要があります")
 		}
 		
 		// ワークスペースIDが設定されているがセッションIDが設定されていない場合、
@@ -265,6 +266,11 @@ func GetWorkspaceID() string {
 	}
 	// レガシーサポート
 	return os.Getenv("CODER_WORKSPACE_ID")
+}
+
+// GetCoderWorkspaceName はCoderワークスペース名を取得します
+func GetCoderWorkspaceName() string {
+	return os.Getenv("CODER_WORKSPACE_NAME")
 }
 
 // GetPollInterval はポーリング間隔を取得します

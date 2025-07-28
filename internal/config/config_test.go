@@ -138,7 +138,7 @@ func TestValidateMissingTaskID(t *testing.T) {
 	err := validate()
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "KERUTA_TASK_ID、KERUTA_SESSION_ID、またはKERUTA_WORKSPACE_ID のいずれかが設定されている必要があります")
+	assert.Contains(t, err.Error(), "KERUTA_TASK_ID、KERUTA_SESSION_ID、KERUTA_WORKSPACE_ID、CODER_WORKSPACE_ID、またはCODER_WORKSPACE_NAME のいずれかが設定されている必要があります")
 }
 
 func TestGetTaskID(t *testing.T) {
@@ -220,4 +220,23 @@ func TestInitFailure(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "KERUTA_API_URL が設定されていません")
+}
+
+func TestGetCoderWorkspaceName(t *testing.T) {
+	// 環境変数を設定
+	os.Setenv("CODER_WORKSPACE_NAME", "test-workspace")
+	defer os.Unsetenv("CODER_WORKSPACE_NAME")
+
+	workspaceName := GetCoderWorkspaceName()
+
+	assert.Equal(t, "test-workspace", workspaceName)
+}
+
+func TestGetCoderWorkspaceNameEmpty(t *testing.T) {
+	// 環境変数を設定しない
+	os.Unsetenv("CODER_WORKSPACE_NAME")
+
+	workspaceName := GetCoderWorkspaceName()
+
+	assert.Equal(t, "", workspaceName)
 }
