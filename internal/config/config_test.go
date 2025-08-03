@@ -135,11 +135,16 @@ func TestValidateMissingTaskID(t *testing.T) {
 	viper.Set("api.token", "test-token")
 
 	// KERUTA_TASK_IDを設定しない
+	// 通常モード（非デーモンモード）での動作をテスト
+	// os.Argsを通常モードに設定
+	originalArgs := os.Args
+	os.Args = []string{"keruta-agent", "execute"}
+	defer func() { os.Args = originalArgs }()
 
 	err := validate()
 
 	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "KERUTA_TASK_ID、KERUTA_SESSION_ID、KERUTA_WORKSPACE_ID、CODER_WORKSPACE_ID、またはCODER_WORKSPACE_NAME のいずれかが設定されている必要があります")
+	assert.Contains(t, err.Error(), "KERUTA_TASK_ID が設定されていません")
 }
 
 func TestGetTaskID(t *testing.T) {
@@ -398,10 +403,14 @@ func TestValidateWithSessionID(t *testing.T) {
 	viper.Set("api.url", "http://test-api.example.com")
 
 	// SESSION_IDを設定（TASK_IDなし）
+	// デーモンモードをシミュレート
+	originalArgs := os.Args
+	os.Args = []string{"keruta-agent", "daemon"}
 	os.Setenv("KERUTA_SESSION_ID", "test-session-123")
 	os.Unsetenv("KERUTA_TASK_ID")
 
 	defer func() {
+		os.Args = originalArgs
 		os.Unsetenv("KERUTA_SESSION_ID")
 		viper.Reset()
 		GlobalConfig = nil
@@ -420,11 +429,15 @@ func TestValidateWithWorkspaceID(t *testing.T) {
 	viper.Set("api.url", "http://test-api.example.com")
 
 	// WORKSPACE_IDを設定（TASK_ID、SESSION_IDなし）
+	// デーモンモードをシミュレート
+	originalArgs := os.Args
+	os.Args = []string{"keruta-agent", "daemon"}
 	os.Setenv("KERUTA_WORKSPACE_ID", "test-workspace-123")
 	os.Unsetenv("KERUTA_TASK_ID")
 	os.Unsetenv("KERUTA_SESSION_ID")
 
 	defer func() {
+		os.Args = originalArgs
 		os.Unsetenv("KERUTA_WORKSPACE_ID")
 		viper.Reset()
 		GlobalConfig = nil
@@ -443,12 +456,16 @@ func TestValidateWithCoderWorkspaceID(t *testing.T) {
 	viper.Set("api.url", "http://test-api.example.com")
 
 	// CODER_WORKSPACE_IDを設定
+	// デーモンモードをシミュレート
+	originalArgs := os.Args
+	os.Args = []string{"keruta-agent", "daemon"}
 	os.Setenv("CODER_WORKSPACE_ID", "coder-workspace-123")
 	os.Unsetenv("KERUTA_TASK_ID")
 	os.Unsetenv("KERUTA_SESSION_ID")
 	os.Unsetenv("KERUTA_WORKSPACE_ID")
 
 	defer func() {
+		os.Args = originalArgs
 		os.Unsetenv("CODER_WORKSPACE_ID")
 		viper.Reset()
 		GlobalConfig = nil
@@ -467,6 +484,9 @@ func TestValidateWithCoderWorkspaceName(t *testing.T) {
 	viper.Set("api.url", "http://test-api.example.com")
 
 	// CODER_WORKSPACE_NAMEを設定
+	// デーモンモードをシミュレート
+	originalArgs := os.Args
+	os.Args = []string{"keruta-agent", "daemon"}
 	os.Setenv("CODER_WORKSPACE_NAME", "my-workspace")
 	os.Unsetenv("KERUTA_TASK_ID")
 	os.Unsetenv("KERUTA_SESSION_ID")
@@ -474,11 +494,41 @@ func TestValidateWithCoderWorkspaceName(t *testing.T) {
 	os.Unsetenv("CODER_WORKSPACE_ID")
 
 	defer func() {
+		os.Args = originalArgs
 		os.Unsetenv("CODER_WORKSPACE_NAME")
 		viper.Reset()
 		GlobalConfig = nil
 	}()
 
+	err := validate()
+	assert.NoError(t, err)
+	assert.NotNil(t, GlobalConfig)
+}
+
+// デーモンモード用のテストケース
+func TestValidateDaemonModeWithoutIDsButWithAPIURL(t *testing.T) {
+	viper.Reset()
+	setDefaults()
+
+	// API URLを設定
+	viper.Set("api.url", "http://test-api.example.com")
+
+	// デーモンモードをシミュレート、IDなし
+	originalArgs := os.Args
+	os.Args = []string{"keruta-agent", "daemon"}
+	os.Unsetenv("KERUTA_TASK_ID")
+	os.Unsetenv("KERUTA_SESSION_ID")
+	os.Unsetenv("KERUTA_WORKSPACE_ID")
+	os.Unsetenv("CODER_WORKSPACE_ID")
+	os.Unsetenv("CODER_WORKSPACE_NAME")
+
+	defer func() {
+		os.Args = originalArgs
+		viper.Reset()
+		GlobalConfig = nil
+	}()
+
+	// API URLが設定されていれば、後でワークスペース名から取得を試みることができるため、エラーにならない
 	err := validate()
 	assert.NoError(t, err)
 	assert.NotNil(t, GlobalConfig)

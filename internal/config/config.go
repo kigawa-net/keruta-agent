@@ -153,7 +153,22 @@ func validate() error {
 	
 	// デーモンモード以外では KERUTA_TASK_ID が必須
 	// デーモンモードではセッションIDまたはワークスペースIDが必要
+	// デーモンモードの判定: コマンドライン引数から判定
+	isDaemonMode := false
+	for _, arg := range os.Args {
+		if arg == "daemon" {
+			isDaemonMode = true
+			break
+		}
+	}
+	
 	if os.Getenv("KERUTA_TASK_ID") == "" {
+		if !isDaemonMode {
+			// 通常モードではTASK_IDが必須
+			return fmt.Errorf("KERUTA_TASK_ID が設定されていません")
+		}
+		
+		// デーモンモードの場合は、セッションIDまたはワークスペースIDをチェック
 		sessionID := os.Getenv("KERUTA_SESSION_ID")
 		workspaceID := os.Getenv("KERUTA_WORKSPACE_ID")
 		coderWorkspaceID := os.Getenv("CODER_WORKSPACE_ID")
@@ -164,8 +179,13 @@ func validate() error {
 		hasSessionID := sessionID != ""
 		hasWorkspaceID := workspaceID != "" || coderWorkspaceID != "" || coderWorkspaceName != ""
 		
+		// デーモンモードでは、ワークスペース名からセッションIDを自動取得できる場合もあるため、
+		// より柔軟に検証する
 		if !hasSessionID && !hasWorkspaceID {
-			return fmt.Errorf("KERUTA_TASK_ID、KERUTA_SESSION_ID、KERUTA_WORKSPACE_ID、CODER_WORKSPACE_ID、またはCODER_WORKSPACE_NAME のいずれかが設定されている必要があります")
+			// 最低限API URLが設定されていれば、後でワークスペース名から取得を試みることができる
+			if viper.GetString("api.url") == "" {
+				return fmt.Errorf("デーモンモードでは KERUTA_SESSION_ID、KERUTA_WORKSPACE_ID、CODER_WORKSPACE_ID、CODER_WORKSPACE_NAME のいずれか、またはワークスペース名から自動取得するためのKERUTA_API_URLが必要です")
+			}
 		}
 		
 		// ワークスペースIDが設定されているがセッションIDが設定されていない場合、
