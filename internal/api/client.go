@@ -343,7 +343,7 @@ func (c *Client) GetSession(sessionID string) (*Session, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API呼び出しが失敗しました: %d - %s (URL: %s)", resp.StatusCode, string(body), url)
 	}
 
 	var session Session
