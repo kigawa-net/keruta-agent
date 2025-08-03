@@ -57,7 +57,10 @@ var daemonCmd = &cobra.Command{
   keruta daemon --pid-file /var/run/keruta-agent.pid
 
   # ログファイルを指定
-  keruta daemon --log-file /var/log/keruta-agent.log`,
+  keruta daemon --log-file /var/log/keruta-agent.log
+
+  # Coderワークスペース内で自動実行（ワークスペース名から自動でセッションIDを検出）
+  keruta daemon  # CODER_WORKSPACE_NAME環境変数またはホスト名から自動取得`,
 }
 
 func runDaemon(_ *cobra.Command, _ []string) error {
@@ -458,6 +461,74 @@ func initializeRepositoryForSession(apiClient *api.Client, sessionID string, log
 	return nil
 }
 
+// getWorkspaceName はCoderワークスペース名を取得します
+func getWorkspaceName() string {
+	// Coder環境変数から取得（最も一般的）
+	if workspaceName := os.Getenv("CODER_WORKSPACE_NAME"); workspaceName != "" {
+		return workspaceName
+	}
+	
+	// ホスト名から取得（Coderワークスペース内では一般的にワークスペース名がホスト名になる）
+	if hostname, err := os.Hostname(); err == nil && hostname != "" && hostname != "localhost" {
+		return hostname
+	}
+	
+	// PWDの最後のディレクトリ名から推測
+	if pwd := os.Getenv("PWD"); pwd != "" {
+		parts := strings.Split(pwd, "/")
+		if len(parts) > 0 {
+			lastDir := parts[len(parts)-1]
+			if lastDir != "" && strings.HasPrefix(lastDir, "session-") {
+				return lastDir
+			}
+		}
+	}
+	
+	return ""
+}
+
+// extractSessionIDFromWorkspaceName はワークスペース名からセッションIDを抽出します
+func extractSessionIDFromWorkspaceName(workspaceName string) string {
+	// パターン1: session-{sessionId}-{suffix} の形式
+	if strings.HasPrefix(workspaceName, "session-") {
+		parts := strings.Split(workspaceName, "-")
+		if len(parts) >= 3 {
+			// session-{8桁以上のID}-{suffix} の形式を想定
+			sessionID := parts[1]
+			if len(sessionID) >= 8 {
+				return sessionID
+			}
+		}
+	}
+	
+	// パターン2: {sessionId}-{suffix} の形式（UUIDらしき文字列）
+	parts := strings.Split(workspaceName, "-")
+	if len(parts) >= 2 {
+		possibleID := parts[0]
+		// UUIDの最初の部分らしき文字列（8文字以上の英数字）
+		if len(possibleID) >= 8 && isAlphaNumeric(possibleID) {
+			return possibleID
+		}
+	}
+	
+	// パターン3: 完全なUUID形式
+	if len(workspaceName) >= 32 && (strings.Contains(workspaceName, "-") || isAlphaNumeric(workspaceName)) {
+		return workspaceName
+	}
+	
+	return ""
+}
+
+// isAlphaNumeric は文字列が英数字のみかチェックします
+func isAlphaNumeric(s string) bool {
+	for _, r := range s {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
 func init() {
 	// フラグの設定
 	daemonCmd.Flags().DurationVar(&daemonInterval, "interval", 10*time.Second, "タスクポーリングの間隔（非推奨、--poll-intervalを使用）")
@@ -477,6 +548,21 @@ func init() {
 	// レガシーサポート
 	if workspaceID := os.Getenv("CODER_WORKSPACE_ID"); workspaceID != "" && daemonWorkspaceID == "" {
 		daemonWorkspaceID = workspaceID
+	}
+	
+	// ワークスペース名からセッションIDを自動取得
+	if daemonSessionID == "" && daemonWorkspaceID == "" {
+		if workspaceName := getWorkspaceName(); workspaceName != "" {
+			logrus.WithField("workspace_name", workspaceName).Info("ワークスペース名からセッションIDを取得しています...")
+			if sessionID := extractSessionIDFromWorkspaceName(workspaceName); sessionID != "" {
+				daemonSessionID = sessionID
+				logrus.WithField("session_id", sessionID).Info("ワークスペース名からセッションIDを自動取得しました")
+			} else {
+				logrus.WithField("workspace_name", workspaceName).Warn("ワークスペース名からセッションIDを抽出できませんでした")
+			}
+		} else {
+			logrus.Warn("ワークスペース名を取得できませんでした。環境変数CODER_WORKSPACE_NAME、ホスト名、またはディレクトリ名を確認してください")
+		}
 	}
 
 	// poll-intervalが設定されていない場合、intervalを使用（後方互換性）
