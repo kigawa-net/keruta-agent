@@ -452,6 +452,56 @@ func (c *Client) GetTaskScript(taskID string) (string, error) {
 	return script.Content, nil
 }
 
+// SearchSessionByPartialID は部分的なセッションIDで検索し、完全なUUIDを取得します
+func (c *Client) SearchSessionByPartialID(partialID string) (*Session, error) {
+	url := fmt.Sprintf("%s/api/v1/sessions/search/partial-id?partialId=%s", c.baseURL, partialID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("リクエストの作成に失敗: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API呼び出しに失敗: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API呼び出しが失敗しました: %d - %s (URL: %s)", resp.StatusCode, string(body), url)
+	}
+
+	var sessions []Session
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w", err)
+	}
+
+	// 結果が空の場合
+	if len(sessions) == 0 {
+		return nil, fmt.Errorf("部分的なID '%s' に一致するセッションが見つかりませんでした", partialID)
+	}
+
+	// 複数の結果がある場合は最初のものを返す（通常は1つだけのはず）
+	if len(sessions) > 1 {
+		logger.WithTaskIDAndComponent("api").WithFields(logrus.Fields{
+			"partialId":    partialID,
+			"sessionCount": len(sessions),
+		}).Warning("部分的なIDに複数のセッションが一致しました。最初のものを使用します")
+	}
+
+	return &sessions[0], nil
+}
+
 // CreateAutoFixTask は自動修正タスクを作成します
 func (c *Client) CreateAutoFixTask(taskID string, errorMessage string, errorCode string) error {
 	url := fmt.Sprintf("%s/api/v1/tasks/%s/auto-fix", c.baseURL, taskID)
