@@ -303,8 +303,8 @@ type Session struct {
 	Tags           []string                `json:"tags"`
 	Metadata       map[string]string       `json:"metadata"`
 	TemplateConfig *SessionTemplateConfig  `json:"templateConfig"`
-	CreatedAt      string                  `json:"createdAt"`
-	UpdatedAt      string                  `json:"updatedAt"`
+	CreatedAt      interface{}             `json:"createdAt"`
+	UpdatedAt      interface{}             `json:"updatedAt"`
 }
 
 type SessionTemplateConfig struct {
@@ -500,6 +500,50 @@ func (c *Client) SearchSessionByPartialID(partialID string) (*Session, error) {
 	}
 
 	return &sessions[0], nil
+}
+
+// SearchSessionByName は名前による完全一致でセッションを検索します
+func (c *Client) SearchSessionByName(name string) (*Session, error) {
+	url := fmt.Sprintf("%s/api/v1/sessions/search?name=%s", c.baseURL, name)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("リクエストの作成に失敗: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API呼び出しに失敗: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API呼び出しが失敗しました: %d - %s (URL: %s)", resp.StatusCode, string(body), url)
+	}
+
+	var sessions []Session
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w", err)
+	}
+
+	// 完全一致のセッションを探す
+	for _, session := range sessions {
+		if session.Name == name {
+			return &session, nil
+		}
+	}
+
+	return nil, fmt.Errorf("名前 '%s' に一致するセッションが見つかりませんでした", name)
 }
 
 // CreateAutoFixTask は自動修正タスクを作成します

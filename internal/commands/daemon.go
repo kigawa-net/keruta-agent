@@ -549,7 +549,7 @@ func extractSessionIDFromWorkspaceName(workspaceName string) string {
 	return ""
 }
 
-// resolveFullSessionID は部分的なセッションIDから完全なUUIDを取得します
+// resolveFullSessionID は部分的なセッションIDまたはワークスペース名から完全なUUIDを取得します
 func resolveFullSessionID(apiClient *api.Client, partialID string, logger *logrus.Entry) string {
 	// 既に完全なUUID形式の場合はそのまま返す
 	if isValidUUIDFormat(partialID) {
@@ -557,14 +557,31 @@ func resolveFullSessionID(apiClient *api.Client, partialID string, logger *logru
 	}
 	
 	// 部分的なIDが短すぎる場合はそのまま返す
-	if len(partialID) < 8 {
+	if len(partialID) < 4 {
 		logger.WithField("partialId", partialID).Debug("部分的なIDが短すぎるため、APIで検索をスキップします")
 		return partialID
 	}
 	
 	logger.WithField("partialId", partialID).Info("部分的なセッションIDから完全なUUIDを検索しています...")
 	
-	// APIで部分的なIDから完全なUUIDを検索
+	// まず、ワークスペース名による完全一致検索を試す
+	// ワークスペース名が "session-{uuid}-{suffix}" の形式の場合、ワークスペース名全体で検索
+	if strings.HasPrefix(partialID, "session-") || len(partialID) > 20 {
+		workspaceName := getWorkspaceName()
+		if workspaceName != "" && workspaceName != partialID {
+			logger.WithField("workspaceName", workspaceName).Info("ワークスペース名による完全一致検索を試行中...")
+			if session, err := apiClient.SearchSessionByName(workspaceName); err == nil {
+				logger.WithFields(logrus.Fields{
+					"workspaceName": workspaceName,
+					"sessionId":     session.ID,
+					"sessionName":   session.Name,
+				}).Info("ワークスペース名による完全一致でセッションを発見しました")
+				return session.ID
+			}
+		}
+	}
+	
+	// 部分的なIDから完全なUUIDを検索
 	session, err := apiClient.SearchSessionByPartialID(partialID)
 	if err != nil {
 		logger.WithError(err).WithField("partialId", partialID).Warning("部分的なIDでの検索に失敗しました。元のIDを使用します")
