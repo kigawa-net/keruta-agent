@@ -125,11 +125,11 @@ func TestDetermineWorkingDirectoryDefault(t *testing.T) {
 
 	workDir := DetermineWorkingDirectory("test-session-123", templateConfig)
 
-	// ホームディレクトリまたは/tmp/kerutaベースのパスが生成される
+	// ホームディレクトリまたは/tmp/kerutaベースのパスが生成される（新しい構造では sessionID は含まれない）
 	assert.True(t,
-		strings.Contains(workDir, "test-session-123") &&
-			strings.Contains(workDir, "repo"),
-		"Working directory should contain session ID and repo name: %s", workDir)
+		strings.Contains(workDir, "repo") &&
+			(strings.Contains(workDir, "keruta") || strings.Contains(workDir, "/tmp")),
+		"Working directory should contain repo name and base directory: %s", workDir)
 }
 
 func TestDetermineWorkingDirectoryWithCustomBaseDir(t *testing.T) {
@@ -159,7 +159,7 @@ func TestDetermineWorkingDirectoryWithCustomBaseDir(t *testing.T) {
 	}
 
 	workDir := DetermineWorkingDirectory("session-456", templateConfig)
-	expectedPath := filepath.Join(testBaseDir, "sessions", "session-456", "my-project")
+	expectedPath := filepath.Join(testBaseDir, "my-project")
 	assert.Equal(t, expectedPath, workDir)
 }
 
@@ -222,7 +222,7 @@ func TestDetermineWorkingDirectoryRepoNameExtraction(t *testing.T) {
 			}
 
 			workDir := DetermineWorkingDirectory("test-session", templateConfig)
-			expectedPath := filepath.Join("/test/base", "sessions", "test-session", tt.expectedRepo)
+			expectedPath := filepath.Join("/test/base", tt.expectedRepo)
 			assert.Equal(t, expectedPath, workDir)
 		})
 	}

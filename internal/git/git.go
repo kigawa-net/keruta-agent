@@ -246,18 +246,15 @@ func DetermineWorkingDirectory(sessionID string, templateConfig *SessionTemplate
 		return workDir
 	}
 
-	// デフォルトのベースディレクトリを決定
+	// デフォルトのベースディレクトリを決定（~/kerutaに変更）
 	baseDir := os.Getenv("KERUTA_BASE_DIR")
 	if baseDir == "" {
 		if homeDir, err := os.UserHomeDir(); err == nil {
-			baseDir = filepath.Join(homeDir, ".keruta")
+			baseDir = filepath.Join(homeDir, "keruta")
 		} else {
 			baseDir = "/tmp/keruta"
 		}
 	}
-
-	// セッションごとのディレクトリを作成
-	sessionDir := filepath.Join(baseDir, "sessions", sessionID)
 
 	// リポジトリ名を抽出（URLの最後の部分）
 	repoName := "repository"
@@ -268,5 +265,5 @@ func DetermineWorkingDirectory(sessionID string, templateConfig *SessionTemplate
 		}
 	}
 
-	return filepath.Join(sessionDir, repoName)
+	return filepath.Join(baseDir, repoName)
 }
