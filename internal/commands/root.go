@@ -49,15 +49,6 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&taskID, "task-id", "", "タスクID（環境変数KERUTA_TASK_IDから自動取得）")
 
 	// サブコマンドの追加
-	rootCmd.AddCommand(executeCmd)
-	rootCmd.AddCommand(startCmd)
-	rootCmd.AddCommand(successCmd)
-	rootCmd.AddCommand(failCmd)
-	rootCmd.AddCommand(progressCmd)
-	rootCmd.AddCommand(logCmd)
-	rootCmd.AddCommand(artifactCmd)
-	rootCmd.AddCommand(healthCmd)
-	rootCmd.AddCommand(configCmd)
 	rootCmd.AddCommand(daemonCmd)
 
 	// ヘルプテンプレートの設定
@@ -66,24 +57,9 @@ func init() {
 {{end}}{{if or .Runnable .HasSubCommands}}{{.UsageString}}{{end}}`)
 
 	// 使用例の設定
-	rootCmd.Example = `  # スクリプトの実行
-  keruta execute --task-id task123
+	rootCmd.Example = `  # デーモンモードで起動
+  keruta daemon
 
-  # タスクの開始
-  keruta start
-
-  # 進捗の報告
-  keruta progress 50 --message "データ処理中..."
-
-  # タスクの成功
-  keruta success --message "処理が完了しました"
-
-  # タスクの失敗
-  keruta fail --message "エラーが発生しました" --error-code DB_ERROR
-
-  # ログの送信
-  keruta log INFO "処理を開始します"
-
-  # ヘルスチェック
-  keruta health`
+  # デーモンモードでポート指定
+  keruta daemon --port 8080`
 }
