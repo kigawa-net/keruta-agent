@@ -301,6 +301,8 @@ type Session struct {
 	Status         string                  `json:"status"`
 	WorkspaceID    string                  `json:"workspaceId"`
 	Tags           []string                `json:"tags"`
+	RepositoryURL  string                  `json:"repositoryUrl"`
+	RepositoryRef  string                  `json:"repositoryRef"`
 	Metadata       map[string]string       `json:"metadata"`
 	TemplateConfig *SessionTemplateConfig  `json:"templateConfig"`
 	CreatedAt      interface{}             `json:"createdAt"`

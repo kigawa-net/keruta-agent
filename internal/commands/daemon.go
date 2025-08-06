@@ -421,42 +421,46 @@ func initializeRepositoryForSession(apiClient *api.Client, sessionID string, log
 		return fmt.Errorf("セッション情報の取得に失敗: %w", err)
 	}
 
-	// テンプレート設定がない場合はスキップ
-	if session.TemplateConfig == nil {
-		logger.Debug("セッションにテンプレート設定がないため、リポジトリ初期化をスキップします")
-		return nil
-	}
-
-	templateConfig := session.TemplateConfig
+	logger.WithField("session", session).Debug("セッション情報取得完了")
 
 	// リポジトリURLがない場合はスキップ
-	if templateConfig.RepositoryURL == "" {
-		logger.Debug("リポジトリURLが設定されていないため、リポジトリ初期化をスキップします")
+	if session.RepositoryURL == "" {
+		logger.Warn("セッションにリポジトリURLが設定されていないため、リポジトリ初期化をスキップします")
 		return nil
 	}
 
 	// 作業ディレクトリのパスを決定
 	gitTemplateConfig := &git.SessionTemplateConfig{
-		TemplateID:        templateConfig.TemplateID,
-		TemplateName:      templateConfig.TemplateName,
-		RepositoryURL:     templateConfig.RepositoryURL,
-		RepositoryRef:     templateConfig.RepositoryRef,
-		TemplatePath:      templateConfig.TemplatePath,
-		PreferredKeywords: templateConfig.PreferredKeywords,
-		Parameters:        templateConfig.Parameters,
+		TemplateID:        "",
+		TemplateName:      "",
+		RepositoryURL:     session.RepositoryURL,
+		RepositoryRef:     session.RepositoryRef,
+		TemplatePath:      ".",
+		PreferredKeywords: []string{},
+		Parameters:        map[string]string{},
 	}
+	
+	// セッションにTemplateConfigがある場合はそのデータも使用
+	if session.TemplateConfig != nil {
+		gitTemplateConfig.TemplateID = session.TemplateConfig.TemplateID
+		gitTemplateConfig.TemplateName = session.TemplateConfig.TemplateName
+		gitTemplateConfig.TemplatePath = session.TemplateConfig.TemplatePath
+		gitTemplateConfig.PreferredKeywords = session.TemplateConfig.PreferredKeywords
+		gitTemplateConfig.Parameters = session.TemplateConfig.Parameters
+	}
+	
 	workDir := git.DetermineWorkingDirectory(sessionID, gitTemplateConfig)
 
 	logger.WithFields(logrus.Fields{
-		"repository_url": templateConfig.RepositoryURL,
-		"repository_ref": templateConfig.RepositoryRef,
+		"repository_url": session.RepositoryURL,
+		"repository_ref": session.RepositoryRef,
 		"working_dir":    workDir,
 	}).Info("📂 Gitリポジトリを初期化しています...")
 
 	// Gitリポジトリを作成
 	repo := git.NewRepository(
-		templateConfig.RepositoryURL,
-		templateConfig.RepositoryRef,
+		session.RepositoryURL,
+		session.RepositoryRef,
 		workDir,
 		logger.WithField("component", "git"),
 	)
