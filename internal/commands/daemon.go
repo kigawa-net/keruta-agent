@@ -274,12 +274,21 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 		return fmt.Errorf("スクリプトの取得に失敗しました: %w", err)
 	}
 
-	// スクリプトの実行
-	if err := executeScript(ctx, apiClient, task.ID, script, taskLogger); err != nil {
-		if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("スクリプトの実行に失敗しました: %v", err), "SCRIPT_EXECUTION_ERROR"); failErr != nil {
-			taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
+	// スクリプトの実行 - タスク内容に応じてtmux+claude実行またはスクリプト実行を選択
+	if isClaudeTask(script) {
+		if err := executeTmuxClaudeTask(ctx, apiClient, task.ID, script, taskLogger); err != nil {
+			if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("Claude タスクの実行に失敗しました: %v", err), "CLAUDE_EXECUTION_ERROR"); failErr != nil {
+				taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
+			}
+			return fmt.Errorf("Claude タスクの実行に失敗しました: %w", err)
 		}
-		return fmt.Errorf("スクリプトの実行に失敗しました: %w", err)
+	} else {
+		if err := executeScript(ctx, apiClient, task.ID, script, taskLogger); err != nil {
+			if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("スクリプトの実行に失敗しました: %v", err), "SCRIPT_EXECUTION_ERROR"); failErr != nil {
+				taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
+			}
+			return fmt.Errorf("スクリプトの実行に失敗しました: %w", err)
+		}
 	}
 
 	// タスク成功の通知
@@ -656,6 +665,139 @@ func isAlphaNumeric(s string) bool {
 		}
 	}
 	return true
+}
+
+// isClaudeTask はタスクがClaude実行タスクかどうかを判定します
+func isClaudeTask(script string) bool {
+	// タスク内容に特定のキーワードが含まれている場合にClaude実行とみなす
+	return strings.Contains(script, "claude") ||
+		   strings.Contains(script, "CLAUDE") ||
+		   strings.Contains(script, "Claude")
+}
+
+// executeTmuxClaudeTask はtmux環境でClaude実行タスクを実行します
+func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID string, taskContent string, taskLogger *logrus.Entry) error {
+	taskLogger.Info("🎯 tmux環境でClaude実行タスクを開始しています...")
+
+	// ~/keruta ディレクトリの存在を確認・作成
+	kerutaDir := os.ExpandEnv("$HOME/keruta")
+	if err := ensureDirectory(kerutaDir); err != nil {
+		return fmt.Errorf("~/kerutaディレクトリの作成に失敗: %w", err)
+	}
+
+	// tmuxセッション名を生成（タスクIDベース）
+	tmuxSessionName := fmt.Sprintf("keruta-task-%s", taskID[:8])
+	
+	taskLogger.WithFields(logrus.Fields{
+		"tmux_session": tmuxSessionName,
+		"working_dir":  kerutaDir,
+		"task_content": taskContent,
+	}).Info("tmuxセッションでClaude実行を開始します")
+
+	// Claude実行コマンドを構築
+	claudeCmd := fmt.Sprintf(`claude -p "%s" --dangerously-skip-permissions`, strings.ReplaceAll(taskContent, `"`, `\"`))
+	
+	// tmuxコマンドを構築 - セッション作成、ディレクトリ移動、Claude実行
+	tmuxCmd := exec.CommandContext(ctx, "tmux", 
+		"new-session", "-d", "-s", tmuxSessionName, 
+		"-c", kerutaDir,
+		claudeCmd)
+
+	// コマンド実行とログ収集
+	return executeTmuxCommand(ctx, tmuxCmd, apiClient, taskID, tmuxSessionName, taskLogger)
+}
+
+// ensureDirectory はディレクトリの存在を確認し、存在しない場合は作成します
+func ensureDirectory(dirPath string) error {
+	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
+		return os.MkdirAll(dirPath, 0755)
+	}
+	return nil
+}
+
+// executeTmuxCommand はtmuxコマンドを実行し、出力を監視します
+func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Client, taskID, sessionName string, logger *logrus.Entry) error {
+	logger.Info("🚀 tmuxセッションを起動しています...")
+
+	// tmuxセッション開始
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("tmuxセッション開始に失敗: %w", err)
+	}
+
+	// tmuxセッションの出力を監視
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
+					logger.WithError(err).Warning("tmux出力キャプチャに失敗しました")
+				}
+			}
+		}
+	}()
+
+	// tmuxセッションの完了を待機
+	if err := cmd.Wait(); err != nil {
+		// tmuxセッションを明示的に終了
+		_ = killTmuxSession(sessionName, logger)
+		return fmt.Errorf("tmuxセッション実行に失敗: %w", err)
+	}
+
+	// 最終的な出力をキャプチャ
+	if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
+		logger.WithError(err).Warning("最終出力キャプチャに失敗しました")
+	}
+
+	// tmuxセッションをクリーンアップ
+	if err := killTmuxSession(sessionName, logger); err != nil {
+		logger.WithError(err).Warning("tmuxセッションのクリーンアップに失敗しました")
+	}
+
+	logger.Info("✅ tmux Claude実行タスクが完了しました")
+	return nil
+}
+
+// captureTmuxOutput はtmuxセッションの出力をキャプチャしてAPIに送信します
+func captureTmuxOutput(apiClient *api.Client, taskID, sessionName string, logger *logrus.Entry) error {
+	// tmux capture-pane で出力を取得
+	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p")
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("tmux出力キャプチャに失敗: %w", err)
+	}
+
+	// 出力が空でない場合のみログ送信
+	outputStr := strings.TrimSpace(string(output))
+	if outputStr != "" {
+		lines := strings.Split(outputStr, "\n")
+		for _, line := range lines {
+			if strings.TrimSpace(line) != "" {
+				logger.Info(line)
+				// APIにログを送信
+				if sendErr := apiClient.SendLog(taskID, "INFO", line); sendErr != nil {
+					logger.WithError(sendErr).Warning("ログ送信に失敗しました")
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// killTmuxSession はtmuxセッションを終了します
+func killTmuxSession(sessionName string, logger *logrus.Entry) error {
+	cmd := exec.Command("tmux", "kill-session", "-t", sessionName)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("tmuxセッション終了に失敗: %w", err)
+	}
+	
+	logger.WithField("session", sessionName).Info("tmuxセッションを終了しました")
+	return nil
 }
 
 func init() {
