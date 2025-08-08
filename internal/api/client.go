@@ -136,8 +136,8 @@ type Task struct {
 	Progress    int                    `json:"progress"`
 	ErrorCode   string                 `json:"errorCode"`
 	Parameters  map[string]interface{} `json:"parameters"`
-	CreatedAt   string                 `json:"createdAt"`
-	UpdatedAt   string                 `json:"updatedAt"`
+	CreatedAt   interface{}            `json:"createdAt,omitempty"`
+	UpdatedAt   interface{}            `json:"updatedAt,omitempty"`
 }
 
 // NewClient は新しいAPIクライアントを作成します
