@@ -6,16 +6,18 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/sirupsen/logrus"
 )
 
 // Repository はGitリポジトリの情報を表します
 type Repository struct {
-	URL    string
-	Ref    string
-	Path   string
-	logger *logrus.Entry
+	URL            string
+	Ref            string
+	Path           string
+	NewBranchName  string // 作成する新しいブランチ名
+	logger         *logrus.Entry
 }
 
 // NewRepository は新しいRepositoryインスタンスを作成します
@@ -25,6 +27,17 @@ func NewRepository(url, ref, path string, logger *logrus.Entry) *Repository {
 		Ref:    ref,
 		Path:   path,
 		logger: logger,
+	}
+}
+
+// NewRepositoryWithBranch は新しいブランチ作成付きのRepositoryインスタンスを作成します
+func NewRepositoryWithBranch(url, ref, path, newBranchName string, logger *logrus.Entry) *Repository {
+	return &Repository{
+		URL:           url,
+		Ref:           ref,
+		Path:          path,
+		NewBranchName: newBranchName,
+		logger:        logger,
 	}
 }
 
@@ -87,7 +100,14 @@ func (r *Repository) clone() error {
 
 	// クローン後に指定されたrefにチェックアウト（main/master以外の場合）
 	if r.Ref != "" && r.Ref != "main" && r.Ref != "master" {
-		return r.checkout()
+		if err := r.checkout(); err != nil {
+			return err
+		}
+	}
+
+	// 新しいブランチを作成・チェックアウト
+	if r.NewBranchName != "" {
+		return r.CreateAndCheckoutBranch()
 	}
 
 	return nil
@@ -138,6 +158,12 @@ func (r *Repository) pull() error {
 	}
 
 	r.logger.Info("✅ Gitリポジトリのプルが完了しました")
+
+	// 新しいブランチを作成・チェックアウト
+	if r.NewBranchName != "" {
+		return r.CreateAndCheckoutBranch()
+	}
+
 	return nil
 }
 
@@ -176,6 +202,88 @@ func (r *Repository) checkout() error {
 	}
 
 	r.logger.WithField("ref", r.Ref).Info("指定されたrefにチェックアウトしました")
+	return nil
+}
+
+// CreateAndCheckoutBranch は新しいブランチを作成してチェックアウトします
+func (r *Repository) CreateAndCheckoutBranch() error {
+	if r.NewBranchName == "" {
+		return nil
+	}
+
+	r.logger.WithField("branch_name", r.NewBranchName).Info("🌿 新しいブランチを作成・チェックアウトしています...")
+
+	// 現在のディレクトリを保存
+	oldDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("現在のディレクトリの取得に失敗: %w", err)
+	}
+	defer func() {
+		if chErr := os.Chdir(oldDir); chErr != nil {
+			r.logger.WithError(chErr).Error("元のディレクトリに戻るのに失敗しました")
+		}
+	}()
+
+	// リポジトリディレクトリに移動
+	if err := os.Chdir(r.Path); err != nil {
+		return fmt.Errorf("リポジトリディレクトリへの移動に失敗: %w", err)
+	}
+
+	// ブランチが既に存在するかチェック
+	if r.branchExists(r.NewBranchName) {
+		r.logger.WithField("branch_name", r.NewBranchName).Info("ブランチが既に存在するためチェックアウトします")
+		return r.checkoutExistingBranch(r.NewBranchName)
+	}
+
+	// 新しいブランチを作成してチェックアウト
+	cmd := exec.Command("git", "checkout", "-b", r.NewBranchName)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		r.logger.WithError(err).WithFields(logrus.Fields{
+			"branch_name": r.NewBranchName,
+			"output":      string(output),
+		}).Error("新しいブランチの作成・チェックアウトに失敗しました")
+		return fmt.Errorf("git checkout -b %s に失敗: %w\n出力: %s", r.NewBranchName, err, string(output))
+	}
+
+	r.logger.WithField("branch_name", r.NewBranchName).Info("✅ 新しいブランチを作成・チェックアウトしました")
+	return nil
+}
+
+// branchExists はブランチが存在するかどうかを確認します
+func (r *Repository) branchExists(branchName string) bool {
+	// ローカルブランチの存在確認
+	cmd := exec.Command("git", "branch", "--list", branchName)
+	output, err := cmd.Output()
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		return true
+	}
+
+	// リモートブランチの存在確認
+	cmd = exec.Command("git", "branch", "-r", "--list", "origin/"+branchName)
+	output, err = cmd.Output()
+	if err == nil && len(strings.TrimSpace(string(output))) > 0 {
+		return true
+	}
+
+	return false
+}
+
+// checkoutExistingBranch は既存のブランチにチェックアウトします
+func (r *Repository) checkoutExistingBranch(branchName string) error {
+	cmd := exec.Command("git", "checkout", branchName)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		r.logger.WithError(err).WithFields(logrus.Fields{
+			"branch_name": branchName,
+			"output":      string(output),
+		}).Error("既存ブランチへのチェックアウトに失敗しました")
+		return fmt.Errorf("git checkout %s に失敗: %w\n出力: %s", branchName, err, string(output))
+	}
+
+	r.logger.WithField("branch_name", branchName).Info("既存のブランチにチェックアウトしました")
 	return nil
 }
 
@@ -266,4 +374,60 @@ func DetermineWorkingDirectory(sessionID string, templateConfig *SessionTemplate
 	}
 
 	return filepath.Join(baseDir, repoName)
+}
+
+// GenerateBranchName はセッションIDやタスクIDに基づいてブランチ名を生成します
+func GenerateBranchName(sessionID, taskID string) string {
+	if sessionID == "" && taskID == "" {
+		return ""
+	}
+
+	// セッションベースのブランチ名
+	if sessionID != "" {
+		// UUIDの場合は最初の8文字を使用
+		if len(sessionID) >= 8 {
+			sessionPrefix := sessionID
+			if strings.Contains(sessionID, "-") {
+				parts := strings.Split(sessionID, "-")
+				if len(parts) > 0 {
+					sessionPrefix = parts[0]
+				}
+			} else if len(sessionID) > 8 {
+				sessionPrefix = sessionID[:8]
+			}
+			
+			// タスクIDがある場合は追加
+			if taskID != "" && len(taskID) >= 8 {
+				taskPrefix := taskID
+				if strings.Contains(taskID, "-") {
+					parts := strings.Split(taskID, "-")
+					if len(parts) > 0 {
+						taskPrefix = parts[0]
+					}
+				} else if len(taskID) > 8 {
+					taskPrefix = taskID[:8]
+				}
+				return fmt.Sprintf("keruta-task-%s-%s", sessionPrefix, taskPrefix)
+			}
+			
+			return fmt.Sprintf("keruta-session-%s", sessionPrefix)
+		}
+	}
+
+	// タスクベースのブランチ名（セッションIDがない場合）
+	if taskID != "" && len(taskID) >= 8 {
+		taskPrefix := taskID
+		if strings.Contains(taskID, "-") {
+			parts := strings.Split(taskID, "-")
+			if len(parts) > 0 {
+				taskPrefix = parts[0]
+			}
+		} else if len(taskID) > 8 {
+			taskPrefix = taskID[:8]
+		}
+		return fmt.Sprintf("keruta-task-%s", taskPrefix)
+	}
+
+	// フォールバック: タイムスタンプベースのブランチ名
+	return fmt.Sprintf("keruta-branch-%d", time.Now().Unix())
 }

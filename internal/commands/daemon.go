@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -259,6 +260,11 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 			taskLogger.WithError(err).Error("環境変数の復元に失敗しました")
 		}
 	}()
+
+	// タスク実行前にタスク専用のブランチを作成・チェックアウト
+	if err := setupTaskBranch(apiClient, task.SessionID, task.ID, taskLogger); err != nil {
+		taskLogger.WithError(err).Warn("タスク専用ブランチのセットアップに失敗しました（処理を継続）")
+	}
 
 	// タスク開始の通知
 	if err := apiClient.StartTask(task.ID); err != nil {
@@ -608,6 +614,56 @@ func resolveFullSessionID(apiClient *api.Client, partialID string, logger *logru
 	}).Info("完全なセッションUUIDを取得しました")
 	
 	return session.ID
+}
+
+// setupTaskBranch はタスク専用のブランチを作成・チェックアウトします
+func setupTaskBranch(apiClient *api.Client, sessionID, taskID string, logger *logrus.Entry) error {
+	// 作業ディレクトリが設定されているかチェック
+	workDir := os.Getenv("KERUTA_WORKING_DIR")
+	if workDir == "" {
+		logger.Debug("作業ディレクトリが設定されていないため、ブランチ作成をスキップします")
+		return nil
+	}
+
+	// ディレクトリがGitリポジトリかチェック
+	gitDir := filepath.Join(workDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		logger.Debug("作業ディレクトリがGitリポジトリではないため、ブランチ作成をスキップします")
+		return nil
+	}
+
+	// セッション情報を取得してリポジトリ設定を確認
+	session, err := apiClient.GetSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("セッション情報の取得に失敗: %w", err)
+	}
+
+	if session.RepositoryURL == "" {
+		logger.Debug("セッションにリポジトリURLが設定されていないため、ブランチ作成をスキップします")
+		return nil
+	}
+
+	// タスク専用のブランチ名を生成
+	branchName := git.GenerateBranchName(sessionID, taskID)
+	
+	logger.WithFields(logrus.Fields{
+		"session_id":  sessionID,
+		"task_id":     taskID,
+		"branch_name": branchName,
+		"working_dir": workDir,
+	}).Info("🌿 タスク専用ブランチを作成・チェックアウトしています...")
+
+	// Gitリポジトリインスタンスを作成
+	repo := git.NewRepositoryWithBranch(
+		session.RepositoryURL,
+		session.RepositoryRef,
+		workDir,
+		branchName,
+		logger.WithField("component", "git"),
+	)
+
+	// 新しいブランチを作成・チェックアウト
+	return repo.CreateAndCheckoutBranch()
 }
 
 // extractUUIDPattern はUUID形式のパターンを抽出します
