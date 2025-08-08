@@ -525,15 +525,13 @@ func ValidateGitCommand() error {
 type SessionTemplateConfig struct {
 	TemplateID        string            `json:"templateId"`
 	TemplateName      string            `json:"templateName"`
-	RepositoryURL     string            `json:"repositoryUrl"`
-	RepositoryRef     string            `json:"repositoryRef"`
 	TemplatePath      string            `json:"templatePath"`
 	PreferredKeywords []string          `json:"preferredKeywords"`
 	Parameters        map[string]string `json:"parameters"`
 }
 
 // DetermineWorkingDirectory は作業ディレクトリのパスを決定します
-func DetermineWorkingDirectory(sessionID string, templateConfig *SessionTemplateConfig) string {
+func DetermineWorkingDirectory(sessionID string, repositoryURL string) string {
 	// 環境変数で作業ディレクトリが指定されている場合はそれを使用
 	if workDir := os.Getenv("KERUTA_WORKING_DIR"); workDir != "" {
 		return workDir
@@ -551,8 +549,8 @@ func DetermineWorkingDirectory(sessionID string, templateConfig *SessionTemplate
 
 	// リポジトリ名を抽出（URLの最後の部分）
 	repoName := "repository"
-	if templateConfig != nil && templateConfig.RepositoryURL != "" {
-		parts := strings.Split(strings.TrimSuffix(templateConfig.RepositoryURL, ".git"), "/")
+	if repositoryURL != "" {
+		parts := strings.Split(strings.TrimSuffix(repositoryURL, ".git"), "/")
 		if len(parts) > 0 {
 			repoName = parts[len(parts)-1]
 		}

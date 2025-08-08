@@ -89,12 +89,7 @@ func TestDetermineWorkingDirectoryWithEnvVar(t *testing.T) {
 	testWorkDir := "/test/working/dir"
 	os.Setenv("KERUTA_WORKING_DIR", testWorkDir)
 
-	// テスト用のセッション設定
-	templateConfig := &SessionTemplateConfig{
-		RepositoryURL: "https://github.com/example/repo.git",
-	}
-
-	workDir := DetermineWorkingDirectory("test-session", templateConfig)
+	workDir := DetermineWorkingDirectory("test-session", "https://github.com/example/repo.git")
 	assert.Equal(t, testWorkDir, workDir)
 }
 
@@ -118,12 +113,7 @@ func TestDetermineWorkingDirectoryDefault(t *testing.T) {
 	os.Unsetenv("KERUTA_WORKING_DIR")
 	os.Unsetenv("KERUTA_BASE_DIR")
 
-	// テスト用のセッション設定
-	templateConfig := &SessionTemplateConfig{
-		RepositoryURL: "https://github.com/example/repo.git",
-	}
-
-	workDir := DetermineWorkingDirectory("test-session-123", templateConfig)
+	workDir := DetermineWorkingDirectory("test-session-123", "https://github.com/example/repo.git")
 
 	// ホームディレクトリまたは/tmp/kerutaベースのパスが生成される（新しい構造では sessionID は含まれない）
 	assert.True(t,
@@ -153,12 +143,7 @@ func TestDetermineWorkingDirectoryWithCustomBaseDir(t *testing.T) {
 	testBaseDir := "/custom/base/dir"
 	os.Setenv("KERUTA_BASE_DIR", testBaseDir)
 
-	// テスト用のセッション設定
-	templateConfig := &SessionTemplateConfig{
-		RepositoryURL: "https://github.com/example/my-project.git",
-	}
-
-	workDir := DetermineWorkingDirectory("session-456", templateConfig)
+	workDir := DetermineWorkingDirectory("session-456", "https://github.com/example/my-project.git")
 	expectedPath := filepath.Join(testBaseDir, "my-project")
 	assert.Equal(t, expectedPath, workDir)
 }
@@ -217,11 +202,7 @@ func TestDetermineWorkingDirectoryRepoNameExtraction(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			templateConfig := &SessionTemplateConfig{
-				RepositoryURL: tt.repositoryURL,
-			}
-
-			workDir := DetermineWorkingDirectory("test-session", templateConfig)
+			workDir := DetermineWorkingDirectory("test-session", tt.repositoryURL)
 			expectedPath := filepath.Join("/test/base", tt.expectedRepo)
 			assert.Equal(t, expectedPath, workDir)
 		})

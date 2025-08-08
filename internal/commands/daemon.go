@@ -453,8 +453,6 @@ func initializeRepositoryForSession(apiClient *api.Client, sessionID string, log
 	gitTemplateConfig := &git.SessionTemplateConfig{
 		TemplateID:        "",
 		TemplateName:      "",
-		RepositoryURL:     session.RepositoryURL,
-		RepositoryRef:     session.RepositoryRef,
 		TemplatePath:      ".",
 		PreferredKeywords: []string{},
 		Parameters:        map[string]string{},
@@ -469,7 +467,7 @@ func initializeRepositoryForSession(apiClient *api.Client, sessionID string, log
 		gitTemplateConfig.Parameters = session.TemplateConfig.Parameters
 	}
 	
-	workDir := git.DetermineWorkingDirectory(sessionID, gitTemplateConfig)
+	workDir := git.DetermineWorkingDirectory(sessionID, session.RepositoryURL)
 
 	logger.WithFields(logrus.Fields{
 		"repository_url": session.RepositoryURL,

@@ -315,8 +315,6 @@ type Session struct {
 type SessionTemplateConfig struct {
 	TemplateID         string            `json:"templateId"`
 	TemplateName       string            `json:"templateName"`
-	RepositoryURL      string            `json:"repositoryUrl"`
-	RepositoryRef      string            `json:"repositoryRef"`
 	TemplatePath       string            `json:"templatePath"`
 	PreferredKeywords  []string          `json:"preferredKeywords"`
 	Parameters         map[string]string `json:"parameters"`
