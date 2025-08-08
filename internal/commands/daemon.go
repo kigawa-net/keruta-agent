@@ -297,6 +297,11 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 		}
 	}
 
+	// タスク完了後にGit変更をプッシュ
+	if err := pushTaskChanges(apiClient, task.SessionID, task.ID, taskLogger); err != nil {
+		taskLogger.WithError(err).Warn("変更のプッシュに失敗しました（タスクは完了扱いとします）")
+	}
+
 	// タスク成功の通知
 	if err := apiClient.SuccessTask(task.ID, "タスクが正常に完了しました"); err != nil {
 		return fmt.Errorf("タスク成功の通知に失敗しました: %w", err)
@@ -664,6 +669,65 @@ func setupTaskBranch(apiClient *api.Client, sessionID, taskID string, logger *lo
 
 	// 新しいブランチを作成・チェックアウト
 	return repo.CreateAndCheckoutBranch()
+}
+
+// pushTaskChanges はタスク完了後に変更をコミット・プッシュします
+func pushTaskChanges(apiClient *api.Client, sessionID, taskID string, logger *logrus.Entry) error {
+	// 作業ディレクトリが設定されているかチェック
+	workDir := os.Getenv("KERUTA_WORKING_DIR")
+	if workDir == "" {
+		logger.Debug("作業ディレクトリが設定されていないため、プッシュをスキップします")
+		return nil
+	}
+
+	// ディレクトリがGitリポジトリかチェック
+	gitDir := filepath.Join(workDir, ".git")
+	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
+		logger.Debug("作業ディレクトリがGitリポジトリではないため、プッシュをスキップします")
+		return nil
+	}
+
+	// セッション情報を取得してリポジトリ設定を確認
+	session, err := apiClient.GetSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("セッション情報の取得に失敗: %w", err)
+	}
+
+	if session.RepositoryURL == "" {
+		logger.Debug("セッションにリポジトリURLが設定されていないため、プッシュをスキップします")
+		return nil
+	}
+
+	// プッシュが無効化されているかチェック（環境変数）
+	if os.Getenv("KERUTA_DISABLE_AUTO_PUSH") == "true" {
+		logger.Info("自動プッシュが無効化されています")
+		return nil
+	}
+
+	logger.WithFields(logrus.Fields{
+		"session_id": sessionID,
+		"task_id":    taskID,
+		"working_dir": workDir,
+	}).Info("🚀 タスク完了後の変更をコミット・プッシュしています...")
+
+	// Gitリポジトリインスタンスを作成
+	repo := git.NewRepositoryWithBranchAndPush(
+		session.RepositoryURL,
+		session.RepositoryRef,
+		workDir,
+		"", // ブランチ名は不要（現在のブランチを使用）
+		true, // AutoPush有効
+		logger.WithField("component", "git"),
+	)
+
+	// コミットメッセージを生成
+	branchName := git.GenerateBranchName(sessionID, taskID)
+	commitMessage := fmt.Sprintf("Task %s completed\n\nTask executed in branch: %s\nSession: %s", 
+		taskID[:8], branchName, sessionID[:8])
+
+	// 変更をコミット・プッシュ
+	force := os.Getenv("KERUTA_FORCE_PUSH") == "true"
+	return repo.CommitAndPushChanges(commitMessage, force)
 }
 
 // extractUUIDPattern はUUID形式のパターンを抽出します

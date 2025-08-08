@@ -17,6 +17,7 @@ type Repository struct {
 	Ref            string
 	Path           string
 	NewBranchName  string // 作成する新しいブランチ名
+	AutoPush       bool   // タスク終了時に自動プッシュするかどうか
 	logger         *logrus.Entry
 }
 
@@ -37,6 +38,19 @@ func NewRepositoryWithBranch(url, ref, path, newBranchName string, logger *logru
 		Ref:           ref,
 		Path:          path,
 		NewBranchName: newBranchName,
+		AutoPush:      true, // デフォルトで自動プッシュを有効化
+		logger:        logger,
+	}
+}
+
+// NewRepositoryWithBranchAndPush は新しいブランチ作成とプッシュ設定付きのRepositoryインスタンスを作成します
+func NewRepositoryWithBranchAndPush(url, ref, path, newBranchName string, autoPush bool, logger *logrus.Entry) *Repository {
+	return &Repository{
+		URL:           url,
+		Ref:           ref,
+		Path:          path,
+		NewBranchName: newBranchName,
+		AutoPush:      autoPush,
 		logger:        logger,
 	}
 }
@@ -284,6 +298,177 @@ func (r *Repository) checkoutExistingBranch(branchName string) error {
 	}
 
 	r.logger.WithField("branch_name", branchName).Info("既存のブランチにチェックアウトしました")
+	return nil
+}
+
+// PushBranch は指定されたブランチをリモートにプッシュします
+func (r *Repository) PushBranch(branchName string, force bool) error {
+	if branchName == "" {
+		return fmt.Errorf("ブランチ名が指定されていません")
+	}
+
+	r.logger.WithField("branch_name", branchName).Info("🚀 ブランチをリモートにプッシュしています...")
+
+	// 現在のディレクトリを保存
+	oldDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("現在のディレクトリの取得に失敗: %w", err)
+	}
+	defer func() {
+		if chErr := os.Chdir(oldDir); chErr != nil {
+			r.logger.WithError(chErr).Error("元のディレクトリに戻るのに失敗しました")
+		}
+	}()
+
+	// リポジトリディレクトリに移動
+	if err := os.Chdir(r.Path); err != nil {
+		return fmt.Errorf("リポジトリディレクトリへの移動に失敗: %w", err)
+	}
+
+	// プッシュコマンドの構築
+	args := []string{"push", "-u", "origin", branchName}
+	if force {
+		args = append(args, "--force-with-lease")
+	}
+
+	cmd := exec.Command("git", args...)
+	output, err := cmd.CombinedOutput()
+
+	if err != nil {
+		r.logger.WithError(err).WithFields(logrus.Fields{
+			"branch_name": branchName,
+			"output":      string(output),
+			"force":       force,
+		}).Error("ブランチのプッシュに失敗しました")
+		return fmt.Errorf("git push origin %s に失敗: %w\n出力: %s", branchName, err, string(output))
+	}
+
+	r.logger.WithField("branch_name", branchName).Info("✅ ブランチのプッシュが完了しました")
+	return nil
+}
+
+// PushCurrentBranch は現在のブランチをリモートにプッシュします
+func (r *Repository) PushCurrentBranch(force bool) error {
+	// 現在のブランチ名を取得
+	currentBranch, err := r.getCurrentBranchName()
+	if err != nil {
+		return fmt.Errorf("現在のブランチ名の取得に失敗: %w", err)
+	}
+
+	return r.PushBranch(currentBranch, force)
+}
+
+// getCurrentBranchName は現在のブランチ名を取得します
+func (r *Repository) getCurrentBranchName() (string, error) {
+	// 現在のディレクトリを保存
+	oldDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("現在のディレクトリの取得に失敗: %w", err)
+	}
+	defer func() {
+		if chErr := os.Chdir(oldDir); chErr != nil {
+			r.logger.WithError(chErr).Error("元のディレクトリに戻るのに失敗しました")
+		}
+	}()
+
+	// リポジトリディレクトリに移動
+	if err := os.Chdir(r.Path); err != nil {
+		return "", fmt.Errorf("リポジトリディレクトリへの移動に失敗: %w", err)
+	}
+
+	cmd := exec.Command("git", "branch", "--show-current")
+	output, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("現在のブランチ名の取得に失敗: %w", err)
+	}
+
+	branchName := strings.TrimSpace(string(output))
+	if branchName == "" {
+		return "", fmt.Errorf("ブランチ名が空です")
+	}
+
+	return branchName, nil
+}
+
+// CommitAllChanges は全ての変更をコミットします
+func (r *Repository) CommitAllChanges(message string) error {
+	if message == "" {
+		message = "Auto-commit by keruta-agent"
+	}
+
+	r.logger.WithField("message", message).Info("📝 変更をコミットしています...")
+
+	// 現在のディレクトリを保存
+	oldDir, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("現在のディレクトリの取得に失敗: %w", err)
+	}
+	defer func() {
+		if chErr := os.Chdir(oldDir); chErr != nil {
+			r.logger.WithError(chErr).Error("元のディレクトリに戻るのに失敗しました")
+		}
+	}()
+
+	// リポジトリディレクトリに移動
+	if err := os.Chdir(r.Path); err != nil {
+		return fmt.Errorf("リポジトリディレクトリへの移動に失敗: %w", err)
+	}
+
+	// 変更があるかチェック
+	hasChanges, err := r.hasUncommittedChanges()
+	if err != nil {
+		return fmt.Errorf("変更状態の確認に失敗: %w", err)
+	}
+
+	if !hasChanges {
+		r.logger.Info("コミットする変更がありません")
+		return nil
+	}
+
+	// git add -A
+	addCmd := exec.Command("git", "add", "-A")
+	addOutput, err := addCmd.CombinedOutput()
+	if err != nil {
+		r.logger.WithError(err).WithField("output", string(addOutput)).Error("git add に失敗しました")
+		return fmt.Errorf("git add に失敗: %w\n出力: %s", err, string(addOutput))
+	}
+
+	// git commit
+	commitCmd := exec.Command("git", "commit", "-m", message)
+	commitOutput, err := commitCmd.CombinedOutput()
+	if err != nil {
+		r.logger.WithError(err).WithField("output", string(commitOutput)).Error("git commit に失敗しました")
+		return fmt.Errorf("git commit に失敗: %w\n出力: %s", err, string(commitOutput))
+	}
+
+	r.logger.Info("✅ 変更のコミットが完了しました")
+	return nil
+}
+
+// hasUncommittedChanges は未コミットの変更があるかチェックします
+func (r *Repository) hasUncommittedChanges() (bool, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	output, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("git status の実行に失敗: %w", err)
+	}
+
+	// 出力が空でない場合は変更がある
+	return len(strings.TrimSpace(string(output))) > 0, nil
+}
+
+// CommitAndPushChanges は変更をコミットしてプッシュします
+func (r *Repository) CommitAndPushChanges(commitMessage string, force bool) error {
+	// 変更をコミット
+	if err := r.CommitAllChanges(commitMessage); err != nil {
+		return fmt.Errorf("コミットに失敗: %w", err)
+	}
+
+	// 現在のブランチをプッシュ
+	if err := r.PushCurrentBranch(force); err != nil {
+		return fmt.Errorf("プッシュに失敗: %w", err)
+	}
+
 	return nil
 }
 

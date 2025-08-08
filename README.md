@@ -122,6 +122,13 @@ Session (1) ←→ (1) Workspace ←→ (1) keruta-agent
 - **ベースブランチ対応** - セッションの登録ブランチをベースとしたブランチ作成
 - **自動クリーンアップ** - 不要なブランチの自動削除（設定可能）
 
+### 9. 自動プッシュ機能
+- **タスク完了時プッシュ** - タスク終了後に変更を自動的にリモートリポジトリにプッシュ
+- **自動コミット** - 全ての変更を自動的にコミット（変更がない場合はスキップ）
+- **スマートプッシュ** - force-with-leaseオプションで安全なプッシュを実行
+- **コミットメッセージ生成** - タスクID・セッションIDを含む構造化されたコミットメッセージ
+- **環境変数制御** - プッシュ機能の有効化・無効化を環境変数で制御
+
 ## タスク実行フロー
 
 ### 1. セッション監視とタスク取得
@@ -139,8 +146,9 @@ Session (1) ←→ (1) Workspace ←→ (1) keruta-agent
 3. タスクスクリプトの実行開始
 4. 進捗とログのリアルタイム送信
 5. 成果物の自動収集
-6. 完了時のステータス更新 (COMPLETED/FAILED)
-7. 次のタスクへ移行
+6. 変更の自動コミット・プッシュ
+7. 完了時のステータス更新 (COMPLETED/FAILED)
+8. 次のタスクへ移行
 ```
 
 ### 3. エラー処理とリトライ
@@ -346,6 +354,8 @@ keruta config set <key> <value>
 | `KERUTA_MAX_CONCURRENT_TASKS` | 最大同時実行タスク数（常に1） | `1` |
 | `KERUTA_WORKING_DIR` | タスク実行時の作業ディレクトリ | 自動設定 |
 | `KERUTA_BASE_DIR` | ベースディレクトリ | `$HOME/.keruta` または `/tmp/keruta` |
+| `KERUTA_DISABLE_AUTO_PUSH` | 自動プッシュの無効化 | `false` |
+| `KERUTA_FORCE_PUSH` | 強制プッシュの有効化 | `false` |
 | `CODER_WORKSPACE_ID` | Coderワークスペース自動検出用 | 自動設定 |
 
 ## セットアップ
@@ -417,12 +427,18 @@ export KERUTA_WORKSPACE_ID="workspace-456"
 export KERUTA_API_URL="http://keruta-api:8080"
 export KERUTA_API_TOKEN="your-api-token"
 
+# Git自動プッシュ設定（オプション）
+export KERUTA_DISABLE_AUTO_PUSH="false"  # 自動プッシュを有効化
+export KERUTA_FORCE_PUSH="false"         # 強制プッシュを無効化
+
 # 1. デーモンとしてkeruta-agentを起動（セッションのタスクを自動実行）
 keruta daemon --session-id $KERUTA_SESSION_ID --port 8080 &
 DAEMON_PID=$!
 
 # 2. デーモンが自動的にセッションのタスクを順次実行
 # （手動でタスクを指定する必要なし）
+# - タスク実行前：専用ブランチを自動作成・チェックアウト
+# - タスク実行後：変更を自動コミット・プッシュ
 
 # 3. セッション完了まで待機
 wait $DAEMON_PID
@@ -550,6 +566,10 @@ keruta-agent/
 │   │   ├── retry.go           # リトライ機能
 │   │   ├── script.go          # スクリプトAPI
 │   │   └── task_status.go     # タスクステータスAPI
+│   ├── git/                   # Git操作機能
+│   │   ├── git.go             # Gitリポジトリ操作
+│   │   ├── git_test.go        # 基本Git機能テスト
+│   │   └── git_branch_test.go # ブランチ・プッシュ機能テスト
 │   ├── commands/              # CLIコマンド実装
 │   │   ├── artifact.go        # artifactコマンド
 │   │   ├── config.go          # configコマンド
