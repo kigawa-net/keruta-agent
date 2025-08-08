@@ -127,11 +127,14 @@ type ScriptResponse struct {
 // Task はタスク情報を表します
 type Task struct {
 	ID          string                 `json:"id"`
+	SessionID   string                 `json:"sessionId"`
 	Name        string                 `json:"name"`
 	Description string                 `json:"description"`
-	Status      TaskStatus             `json:"status"`
-	WorkspaceID string                 `json:"workspaceId"`
 	Script      string                 `json:"script"`
+	Status      TaskStatus             `json:"status"`
+	Message     string                 `json:"message"`
+	Progress    int                    `json:"progress"`
+	ErrorCode   string                 `json:"errorCode"`
 	Parameters  map[string]interface{} `json:"parameters"`
 	CreatedAt   string                 `json:"createdAt"`
 	UpdatedAt   string                 `json:"updatedAt"`
