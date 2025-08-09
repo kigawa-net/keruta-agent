@@ -280,6 +280,14 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 		return fmt.Errorf("スクリプトの取得に失敗しました: %w", err)
 	}
 
+	// スクリプト内容を表示
+	taskLogger.Info("📋 実行するスクリプトの内容:")
+	taskLogger.Info("=" + strings.Repeat("=", 50))
+	for i, line := range strings.Split(script, "\n") {
+		taskLogger.Infof("%3d | %s", i+1, line)
+	}
+	taskLogger.Info("=" + strings.Repeat("=", 50))
+
 	// スクリプトの実行 - タスク内容に応じてtmux+claude実行またはスクリプト実行を選択
 	if isClaudeTask(script) {
 		if err := executeTmuxClaudeTask(ctx, apiClient, task.ID, script, taskLogger); err != nil {
@@ -313,7 +321,7 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 
 // executeScript はスクリプトを実行します
 func executeScript(ctx context.Context, apiClient *api.Client, taskID string, script string, scriptLogger *logrus.Entry) error {
-	scriptLogger.Info("📝 スクリプトを実行しています...")
+	scriptLogger.Info("🚀 スクリプトの実行を開始します...")
 
 	// 一時的なスクリプトファイルを作成
 	tmpFile, err := os.CreateTemp("", "keruta-script-*.sh")
