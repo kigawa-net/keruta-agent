@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -110,7 +109,7 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 			// 完全なUUIDが取得できた場合、更新する
 			daemonSessionID = fullSessionID
 		}
-		
+
 		if err := initializeRepositoryForSession(apiClient, daemonSessionID, daemonLogger); err != nil {
 			daemonLogger.WithError(err).Error("リポジトリの初期化に失敗しました")
 		}
@@ -166,7 +165,7 @@ func pollAndExecuteSessionTasks(ctx context.Context, apiClient *api.Client, logg
 			// 完全なUUIDが取得できた場合、更新する
 			daemonSessionID = fullSessionID
 		}
-		
+
 		session, err := apiClient.GetSession(daemonSessionID)
 		if err != nil {
 			return fmt.Errorf("セッション情報の取得に失敗しました: %w", err)
@@ -288,21 +287,12 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 	}
 	taskLogger.Info("=" + strings.Repeat("=", 50))
 
-	// スクリプトの実行 - タスク内容に応じてtmux+claude実行またはスクリプト実行を選択
-	if isClaudeTask(script) {
-		if err := executeTmuxClaudeTask(ctx, apiClient, task.ID, script, taskLogger); err != nil {
-			if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("Claude タスクの実行に失敗しました: %v", err), "CLAUDE_EXECUTION_ERROR"); failErr != nil {
-				taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
-			}
-			return fmt.Errorf("Claude タスクの実行に失敗しました: %w", err)
+	// スクリプトの実行 - 常にclaudeコマンドを使用
+	if err := executeTmuxClaudeTask(ctx, apiClient, task.ID, script, taskLogger); err != nil {
+		if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("Claude タスクの実行に失敗しました: %v", err), "CLAUDE_EXECUTION_ERROR"); failErr != nil {
+			taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
 		}
-	} else {
-		if err := executeScript(ctx, apiClient, task.ID, script, taskLogger); err != nil {
-			if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("スクリプトの実行に失敗しました: %v", err), "SCRIPT_EXECUTION_ERROR"); failErr != nil {
-				taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
-			}
-			return fmt.Errorf("スクリプトの実行に失敗しました: %w", err)
-		}
+		return fmt.Errorf("Claude タスクの実行に失敗しました: %w", err)
 	}
 
 	// タスク完了後にGit変更をプッシュ
@@ -316,107 +306,6 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 	}
 
 	taskLogger.Info("✅ タスクが正常に完了しました")
-	return nil
-}
-
-// executeScript はスクリプトを実行します
-func executeScript(ctx context.Context, apiClient *api.Client, taskID string, script string, scriptLogger *logrus.Entry) error {
-	scriptLogger.Info("🚀 スクリプトの実行を開始します...")
-
-	// 一時的なスクリプトファイルを作成
-	tmpFile, err := os.CreateTemp("", "keruta-script-*.sh")
-	if err != nil {
-		return fmt.Errorf("一時スクリプトファイルの作成に失敗: %w", err)
-	}
-	defer func() {
-		if removeErr := os.Remove(tmpFile.Name()); removeErr != nil {
-			scriptLogger.WithError(removeErr).Warning("一時スクリプトファイルの削除に失敗しました")
-		}
-	}()
-
-	// スクリプト内容を書き込み
-	if _, err := tmpFile.WriteString(script); err != nil {
-		return fmt.Errorf("スクリプトファイルへの書き込みに失敗: %w", err)
-	}
-	if err := tmpFile.Close(); err != nil {
-		return fmt.Errorf("スクリプトファイルのクローズに失敗: %w", err)
-	}
-
-	// 実行権限を付与
-	if err := os.Chmod(tmpFile.Name(), 0755); err != nil {
-		return fmt.Errorf("スクリプトファイルの実行権限設定に失敗: %w", err)
-	}
-
-	// スクリプトを実行
-	cmd := exec.CommandContext(ctx, "/bin/bash", tmpFile.Name())
-
-	// 作業ディレクトリを設定（環境変数KERUTA_WORKING_DIRが設定されている場合）
-	if workDir := os.Getenv("KERUTA_WORKING_DIR"); workDir != "" {
-		if _, err := os.Stat(workDir); err == nil {
-			cmd.Dir = workDir
-			scriptLogger.WithField("working_dir", workDir).Debug("作業ディレクトリを設定しました")
-		} else {
-			scriptLogger.WithField("working_dir", workDir).Warn("作業ディレクトリが存在しません")
-		}
-	}
-
-	// 標準出力・標準エラーのパイプを作成
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("標準出力パイプの作成に失敗: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return fmt.Errorf("標準エラーパイプの作成に失敗: %w", err)
-	}
-
-	// コマンドを開始
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("スクリプトの開始に失敗: %w", err)
-	}
-
-	// 標準出力をリアルタイムで読み取りログ送信
-	go func() {
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.TrimSpace(line) != "" {
-				scriptLogger.Info(line)
-				// リアルタイムでログを送信
-				if sendErr := apiClient.SendLog(taskID, "INFO", line); sendErr != nil {
-					scriptLogger.WithError(sendErr).Warning("標準出力ログ送信に失敗しました")
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			scriptLogger.WithError(err).Error("標準出力の読み取りに失敗しました")
-		}
-	}()
-
-	// 標準エラーをリアルタイムで読み取りログ送信
-	go func() {
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if strings.TrimSpace(line) != "" {
-				scriptLogger.Error(line)
-				// リアルタイムでログを送信
-				if sendErr := apiClient.SendLog(taskID, "ERROR", line); sendErr != nil {
-					scriptLogger.WithError(sendErr).Warning("標準エラーログ送信に失敗しました")
-				}
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			scriptLogger.WithError(err).Error("標準エラーの読み取りに失敗しました")
-		}
-	}()
-
-	// コマンドの完了を待機
-	if err := cmd.Wait(); err != nil {
-		return fmt.Errorf("スクリプトの実行に失敗: %w", err)
-	}
-
-	scriptLogger.Info("✅ スクリプトの実行が完了しました")
 	return nil
 }
 
@@ -465,7 +354,7 @@ func initializeRepositoryForSession(apiClient *api.Client, sessionID string, log
 		PreferredKeywords: []string{},
 		Parameters:        map[string]string{},
 	}
-	
+
 	// セッションにTemplateConfigがある場合はそのデータも使用
 	if session.TemplateConfig != nil {
 		gitTemplateConfig.TemplateID = session.TemplateConfig.TemplateID
@@ -474,7 +363,7 @@ func initializeRepositoryForSession(apiClient *api.Client, sessionID string, log
 		gitTemplateConfig.PreferredKeywords = session.TemplateConfig.PreferredKeywords
 		gitTemplateConfig.Parameters = session.TemplateConfig.Parameters
 	}
-	
+
 	workDir := git.DetermineWorkingDirectory(sessionID, session.RepositoryURL)
 
 	logger.WithFields(logrus.Fields{
@@ -511,12 +400,12 @@ func getWorkspaceName() string {
 	if workspaceName := os.Getenv("CODER_WORKSPACE_NAME"); workspaceName != "" {
 		return workspaceName
 	}
-	
+
 	// ホスト名から取得（Coderワークスペース内では一般的にワークスペース名がホスト名になる）
 	if hostname, err := os.Hostname(); err == nil && hostname != "" && hostname != "localhost" {
 		return hostname
 	}
-	
+
 	// PWDの最後のディレクトリ名から推測
 	if pwd := os.Getenv("PWD"); pwd != "" {
 		parts := strings.Split(pwd, "/")
@@ -527,7 +416,7 @@ func getWorkspaceName() string {
 			}
 		}
 	}
-	
+
 	return ""
 }
 
@@ -538,12 +427,12 @@ func extractSessionIDFromWorkspaceName(workspaceName string) string {
 	if strings.HasPrefix(workspaceName, "session-") {
 		// "session-" を除去
 		remaining := workspaceName[8:]
-		
+
 		// UUID形式のパターンを探す (8-4-4-4-12の形式)
 		if uuid := extractUUIDPattern(remaining); uuid != "" {
 			return uuid
 		}
-		
+
 		// フォールバック: 最初の部分だけを取得（後方互換性のため）
 		parts := strings.Split(remaining, "-")
 		if len(parts) >= 1 {
@@ -553,19 +442,19 @@ func extractSessionIDFromWorkspaceName(workspaceName string) string {
 			}
 		}
 	}
-	
+
 	// パターン2: {full-uuid}-{suffix} の形式
 	if uuid := extractUUIDPattern(workspaceName); uuid != "" {
 		return uuid
 	}
-	
+
 	// パターン3: 完全なUUID形式（ハイフンを含む）
 	if len(workspaceName) >= 32 && strings.Contains(workspaceName, "-") {
 		if isValidUUIDFormat(workspaceName) {
 			return workspaceName
 		}
 	}
-	
+
 	// パターン4: {sessionId}-{suffix} の形式（UUIDの最初の部分のみ - 後方互換性）
 	parts := strings.Split(workspaceName, "-")
 	if len(parts) >= 2 {
@@ -575,7 +464,7 @@ func extractSessionIDFromWorkspaceName(workspaceName string) string {
 			return possibleID
 		}
 	}
-	
+
 	return ""
 }
 
@@ -585,15 +474,15 @@ func resolveFullSessionID(apiClient *api.Client, partialID string, logger *logru
 	if isValidUUIDFormat(partialID) {
 		return partialID
 	}
-	
+
 	// 部分的なIDが短すぎる場合はそのまま返す
 	if len(partialID) < 4 {
 		logger.WithField("partialId", partialID).Debug("部分的なIDが短すぎるため、APIで検索をスキップします")
 		return partialID
 	}
-	
+
 	logger.WithField("partialId", partialID).Info("部分的なセッションIDから完全なUUIDを検索しています...")
-	
+
 	// まず、ワークスペース名による完全一致検索を試す
 	// ワークスペース名が "session-{uuid}-{suffix}" の形式の場合、ワークスペース名全体で検索
 	if strings.HasPrefix(partialID, "session-") || len(partialID) > 20 {
@@ -610,20 +499,20 @@ func resolveFullSessionID(apiClient *api.Client, partialID string, logger *logru
 			}
 		}
 	}
-	
+
 	// 部分的なIDから完全なUUIDを検索
 	session, err := apiClient.SearchSessionByPartialID(partialID)
 	if err != nil {
 		logger.WithError(err).WithField("partialId", partialID).Warning("部分的なIDでの検索に失敗しました。元のIDを使用します")
 		return partialID
 	}
-	
+
 	logger.WithFields(logrus.Fields{
-		"partialId": partialID,
-		"fullId":    session.ID,
+		"partialId":   partialID,
+		"fullId":      session.ID,
 		"sessionName": session.Name,
 	}).Info("完全なセッションUUIDを取得しました")
-	
+
 	return session.ID
 }
 
@@ -656,7 +545,7 @@ func setupTaskBranch(apiClient *api.Client, sessionID, taskID string, logger *lo
 
 	// タスク専用のブランチ名を生成
 	branchName := git.GenerateBranchName(sessionID, taskID)
-	
+
 	logger.WithFields(logrus.Fields{
 		"session_id":  sessionID,
 		"task_id":     taskID,
@@ -711,8 +600,8 @@ func pushTaskChanges(apiClient *api.Client, sessionID, taskID string, logger *lo
 	}
 
 	logger.WithFields(logrus.Fields{
-		"session_id": sessionID,
-		"task_id":    taskID,
+		"session_id":  sessionID,
+		"task_id":     taskID,
 		"working_dir": workDir,
 	}).Info("🚀 タスク完了後の変更をコミット・プッシュしています...")
 
@@ -721,14 +610,14 @@ func pushTaskChanges(apiClient *api.Client, sessionID, taskID string, logger *lo
 		session.RepositoryURL,
 		session.RepositoryRef,
 		workDir,
-		"", // ブランチ名は不要（現在のブランチを使用）
+		"",   // ブランチ名は不要（現在のブランチを使用）
 		true, // AutoPush有効
 		logger.WithField("component", "git"),
 	)
 
 	// コミットメッセージを生成
 	branchName := git.GenerateBranchName(sessionID, taskID)
-	commitMessage := fmt.Sprintf("Task %s completed\n\nTask executed in branch: %s\nSession: %s", 
+	commitMessage := fmt.Sprintf("Task %s completed\n\nTask executed in branch: %s\nSession: %s",
 		taskID[:8], branchName, sessionID[:8])
 
 	// 変更をコミット・プッシュ
@@ -742,8 +631,8 @@ func extractUUIDPattern(text string) string {
 	parts := strings.Split(text, "-")
 	if len(parts) >= 5 {
 		// 最初の5つの部分がUUID形式かチェック
-		if len(parts[0]) == 8 && len(parts[1]) == 4 && len(parts[2]) == 4 && 
-		   len(parts[3]) == 4 && len(parts[4]) == 12 {
+		if len(parts[0]) == 8 && len(parts[1]) == 4 && len(parts[2]) == 4 &&
+			len(parts[3]) == 4 && len(parts[4]) == 12 {
 			// 各部分が16進数かチェック
 			uuid := strings.Join(parts[0:5], "-")
 			if isValidUUIDFormat(uuid) {
@@ -760,18 +649,18 @@ func isValidUUIDFormat(uuid string) bool {
 	if len(uuid) != 36 {
 		return false
 	}
-	
+
 	// ハイフンの位置チェック
 	if uuid[8] != '-' || uuid[13] != '-' || uuid[18] != '-' || uuid[23] != '-' {
 		return false
 	}
-	
+
 	// 各部分が16進数かチェック
 	parts := strings.Split(uuid, "-")
 	if len(parts) != 5 {
 		return false
 	}
-	
+
 	for _, part := range parts {
 		for _, r := range part {
 			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
@@ -779,7 +668,7 @@ func isValidUUIDFormat(uuid string) bool {
 			}
 		}
 	}
-	
+
 	return true
 }
 
@@ -793,17 +682,29 @@ func isAlphaNumeric(s string) bool {
 	return true
 }
 
-// isClaudeTask はタスクがClaude実行タスクかどうかを判定します
-func isClaudeTask(script string) bool {
-	// タスク内容に特定のキーワードが含まれている場合にClaude実行とみなす
-	return strings.Contains(script, "claude") ||
-		   strings.Contains(script, "CLAUDE") ||
-		   strings.Contains(script, "Claude")
-}
-
 // executeTmuxClaudeTask はtmux環境でClaude実行タスクを実行します
 func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID string, taskContent string, taskLogger *logrus.Entry) error {
 	taskLogger.Info("🎯 tmux環境でClaude実行タスクを開始しています...")
+
+	// セッションIDからtmuxセッション名を生成（1セッション = 1tmuxセッション）
+	var tmuxSessionName string
+	if daemonSessionID != "" {
+		tmuxSessionName = fmt.Sprintf("keruta-session-%s", daemonSessionID[:8])
+	} else {
+		// フォールバック: タスクIDベース（後方互換性）
+		tmuxSessionName = fmt.Sprintf("keruta-task-%s", taskID[:8])
+	}
+
+	// 既存のtmuxセッションをチェック
+	if _, err := getTmuxSessionStatus(tmuxSessionName); err == nil {
+		taskLogger.WithFields(logrus.Fields{
+			"existing_session": tmuxSessionName,
+			"session_id":       daemonSessionID,
+		}).Info("既存のtmuxセッションを再利用します")
+
+		// 既存セッションでClaude実行
+		return executeTmuxCommandInSession(ctx, apiClient, taskID, taskContent, tmuxSessionName, taskLogger)
+	}
 
 	// ~/keruta ディレクトリの存在を確認・作成
 	kerutaDir := os.ExpandEnv("$HOME/keruta")
@@ -811,9 +712,6 @@ func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID st
 		return fmt.Errorf("~/kerutaディレクトリの作成に失敗: %w", err)
 	}
 
-	// tmuxセッション名を生成（タスクIDベース）
-	tmuxSessionName := fmt.Sprintf("keruta-task-%s", taskID[:8])
-	
 	taskLogger.WithFields(logrus.Fields{
 		"tmux_session": tmuxSessionName,
 		"working_dir":  kerutaDir,
@@ -822,10 +720,10 @@ func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID st
 
 	// Claude実行コマンドを構築
 	claudeCmd := fmt.Sprintf(`claude -p "%s" --dangerously-skip-permissions`, strings.ReplaceAll(taskContent, `"`, `\"`))
-	
+
 	// tmuxコマンドを構築 - セッション作成、ディレクトリ移動、Claude実行
-	tmuxCmd := exec.CommandContext(ctx, "tmux", 
-		"new-session", "-d", "-s", tmuxSessionName, 
+	tmuxCmd := exec.CommandContext(ctx, "tmux",
+		"new-session", "-d", "-s", tmuxSessionName,
 		"-c", kerutaDir,
 		claudeCmd)
 
@@ -879,9 +777,13 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 		logger.WithError(err).Warning("最終出力キャプチャに失敗しました")
 	}
 
-	// tmuxセッションをクリーンアップ
-	if err := killTmuxSession(sessionName, logger); err != nil {
-		logger.WithError(err).Warning("tmuxセッションのクリーンアップに失敗しました")
+	// kerutaセッション用のtmuxセッションはクリーンアップしない（再利用のため）
+	if !strings.HasPrefix(sessionName, "keruta-session-") {
+		if err := killTmuxSession(sessionName, logger); err != nil {
+			logger.WithError(err).Warning("tmuxセッションのクリーンアップに失敗しました")
+		}
+	} else {
+		logger.WithField("session", sessionName).Info("kerutaセッション用tmuxセッションを保持します（再利用のため）")
 	}
 
 	logger.Info("✅ tmux Claude実行タスクが完了しました")
@@ -921,8 +823,59 @@ func killTmuxSession(sessionName string, logger *logrus.Entry) error {
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("tmuxセッション終了に失敗: %w", err)
 	}
-	
+
 	logger.WithField("session", sessionName).Info("tmuxセッションを終了しました")
+	return nil
+}
+
+// getTmuxSessionStatus は既存のtmuxセッションの状態を確認します
+func getTmuxSessionStatus(sessionName string) (string, error) {
+	cmd := exec.Command("tmux", "has-session", "-t", sessionName)
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("tmuxセッションが存在しません: %w", err)
+	}
+	return sessionName, nil
+}
+
+// executeTmuxCommandInSession は既存のtmuxセッション内でコマンドを実行します
+func executeTmuxCommandInSession(ctx context.Context, apiClient *api.Client, taskID, taskContent, sessionName string, logger *logrus.Entry) error {
+	logger.WithField("session", sessionName).Info("既存のtmuxセッション内でClaude実行タスクを実行します")
+
+	// Claudeコマンドを構築
+	claudeCmd := fmt.Sprintf(`claude -p "%s" --dangerously-skip-permissions`, strings.ReplaceAll(taskContent, `"`, `\"`))
+
+	// 既存のtmuxセッション内でClaude実行
+	sendCmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", sessionName, claudeCmd, "Enter")
+
+	// コマンド実行
+	if err := sendCmd.Run(); err != nil {
+		return fmt.Errorf("tmuxセッション内でのコマンド実行に失敗: %w", err)
+	}
+
+	// 出力を監視
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
+					logger.WithError(err).Warning("tmux出力キャプチャに失敗しました")
+				}
+			}
+		}
+	}()
+
+	// 少し待機してから最終出力をキャプチャ
+	time.Sleep(3 * time.Second)
+	if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
+		logger.WithError(err).Warning("最終出力キャプチャに失敗しました")
+	}
+
+	logger.Info("✅ 既存セッション内でのClaude実行タスクが完了しました")
 	return nil
 }
 
@@ -946,7 +899,7 @@ func init() {
 	if workspaceID := os.Getenv("CODER_WORKSPACE_ID"); workspaceID != "" && daemonWorkspaceID == "" {
 		daemonWorkspaceID = workspaceID
 	}
-	
+
 	// ワークスペース名からセッションIDを自動取得
 	if daemonSessionID == "" && daemonWorkspaceID == "" {
 		if workspaceName := getWorkspaceName(); workspaceName != "" {
