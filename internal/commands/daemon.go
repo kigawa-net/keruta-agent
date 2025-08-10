@@ -777,14 +777,8 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 		logger.WithError(err).Warning("最終出力キャプチャに失敗しました")
 	}
 
-	// kerutaセッション用のtmuxセッションはクリーンアップしない（再利用のため）
-	if !strings.HasPrefix(sessionName, "keruta-session-") {
-		if err := killTmuxSession(sessionName, logger); err != nil {
-			logger.WithError(err).Warning("tmuxセッションのクリーンアップに失敗しました")
-		}
-	} else {
-		logger.WithField("session", sessionName).Info("kerutaセッション用tmuxセッションを保持します（再利用のため）")
-	}
+	// tmuxセッションはクリーンアップしない（再利用のため保持）
+	logger.WithField("session", sessionName).Info("tmuxセッションを保持します（再利用のため）")
 
 	logger.Info("✅ tmux Claude実行タスクが完了しました")
 	return nil
