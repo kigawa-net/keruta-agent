@@ -41,6 +41,11 @@ func (hook *APILogHook) Fire(entry *logrus.Entry) error {
 		return nil
 	}
 
+	// API関連のログは送信しない（無限ループ防止）
+	if component, ok := entry.Data["component"]; ok && component == "api" {
+		return nil
+	}
+
 	// タスクIDを取得
 	taskID := config.GetTaskID()
 	if taskID == "" {
