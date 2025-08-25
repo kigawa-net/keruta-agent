@@ -789,7 +789,7 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 				return
 			case <-ticker.C:
 				if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
-					logger.WithError(err).Warning("tmux出力キャプチャに失敗しました")
+					logger.WithError(err).Debug("tmux出力キャプチャに失敗しました")
 				}
 			}
 		}
@@ -816,11 +816,18 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 
 // captureTmuxOutput はtmuxセッションの出力をキャプチャしてAPIに送信します
 func captureTmuxOutput(apiClient *api.Client, taskID, sessionName string, logger *logrus.Entry) error {
+	// まずtmuxセッションが存在するかチェック
+	if _, err := getTmuxSessionStatus(sessionName); err != nil {
+		logger.WithError(err).WithField("session", sessionName).Debug("tmuxセッションが存在しないため出力キャプチャをスキップ")
+		return nil // セッションが存在しない場合はエラーにしない
+	}
+
 	// tmux capture-pane で出力を取得
 	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p")
 	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Errorf("tmux出力キャプチャに失敗: %w", err)
+		logger.WithError(err).WithField("session", sessionName).Debug("tmux出力キャプチャに失敗（セッションが存在しない可能性）")
+		return nil // セッション出力キャプチャの失敗は致命的エラーにしない
 	}
 
 	// 出力が空でない場合のみログ送信
@@ -887,7 +894,7 @@ func executeTmuxCommandInSession(ctx context.Context, apiClient *api.Client, tas
 				return
 			case <-ticker.C:
 				if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
-					logger.WithError(err).Warning("tmux出力キャプチャに失敗しました")
+					logger.WithError(err).Debug("tmux出力キャプチャに失敗しました")
 				}
 			}
 		}
