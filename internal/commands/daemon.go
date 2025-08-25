@@ -760,6 +760,12 @@ func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID st
 		"-c", kerutaDir,
 		claudeCmd)
 
+	taskLogger.WithFields(logrus.Fields{
+		"tmux_session": tmuxSessionName,
+		"working_dir":  kerutaDir,
+		"command":      claudeCmd,
+	}).Info("🖥️ tmuxコマンドを構築しました")
+
 	// コマンド実行とログ収集
 	return executeTmuxCommand(ctx, tmuxCmd, apiClient, taskID, tmuxSessionName, taskLogger)
 }
@@ -777,18 +783,28 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 	logger.Info("🚀 tmuxセッションを起動しています...")
 
 	// tmuxセッション開始
+	logger.WithFields(logrus.Fields{
+		"session": sessionName,
+		"command": strings.Join(cmd.Args, " "),
+	}).Info("⚡ tmuxセッションを開始します")
+	
 	if err := cmd.Start(); err != nil {
+		logger.WithError(err).WithField("session", sessionName).Error("❌ tmuxセッション開始に失敗")
 		return fmt.Errorf("tmuxセッション開始に失敗: %w", err)
 	}
+	
+	logger.WithField("session", sessionName).Info("✅ tmuxセッションが開始されました")
 
 	// tmuxセッションの出力を監視
+	logger.WithField("session", sessionName).Info("👁️ tmux出力監視を開始します")
 	go func() {
-		ticker := time.NewTicker(2 * time.Second)
+		ticker := time.NewTicker(1 * time.Second) // より頻繁にキャプチャ
 		defer ticker.Stop()
 
 		for {
 			select {
 			case <-ctx.Done():
+				logger.WithField("session", sessionName).Debug("コンテキストキャンセルによりtmux監視を停止")
 				return
 			case <-ticker.C:
 				if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
@@ -819,14 +835,16 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 
 // captureTmuxOutput はtmuxセッションの出力をキャプチャしてAPIに送信します
 func captureTmuxOutput(apiClient *api.Client, taskID, sessionName string, logger *logrus.Entry) error {
+	logger.WithField("session", sessionName).Debug("🔍 tmuxセッション出力キャプチャを開始")
+	
 	// まずtmuxセッションが存在するかチェック
 	if _, err := getTmuxSessionStatus(sessionName); err != nil {
 		logger.WithError(err).WithField("session", sessionName).Debug("tmuxセッションが存在しないため出力キャプチャをスキップ")
 		return nil // セッションが存在しない場合はエラーにしない
 	}
 
-	// tmux capture-pane で出力を取得
-	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p")
+	// tmux capture-pane で出力を取得（履歴も含む）
+	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-3000")
 	output, err := cmd.Output()
 	if err != nil {
 		logger.WithError(err).WithField("session", sessionName).Debug("tmux出力キャプチャに失敗（セッションが存在しない可能性）")
@@ -836,16 +854,25 @@ func captureTmuxOutput(apiClient *api.Client, taskID, sessionName string, logger
 	// 出力が空でない場合のみログ送信
 	outputStr := strings.TrimSpace(string(output))
 	if outputStr != "" {
+		logger.WithFields(logrus.Fields{
+			"session": sessionName,
+			"lines_count": len(strings.Split(outputStr, "\n")),
+		}).Debug("📄 tmux出力をキャプチャしました")
+		
 		lines := strings.Split(outputStr, "\n")
 		for _, line := range lines {
 			if strings.TrimSpace(line) != "" {
-				logger.Info(line)
+				// ログにプレフィックスを追加してtmux出力であることを明示
+				logMessage := fmt.Sprintf("[tmux:%s] %s", sessionName, line)
+				logger.Info(logMessage)
 				// APIにログを送信
-				if sendErr := apiClient.SendLog(taskID, "INFO", line); sendErr != nil {
+				if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
 					logger.WithError(sendErr).Warning("ログ送信に失敗しました")
 				}
 			}
 		}
+	} else {
+		logger.WithField("session", sessionName).Debug("tmux出力は空でした")
 	}
 
 	return nil
