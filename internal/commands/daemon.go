@@ -422,7 +422,37 @@ func getWorkspaceName() string {
 
 // extractSessionIDFromWorkspaceName はワークスペース名からセッションIDを抽出します
 func extractSessionIDFromWorkspaceName(workspaceName string) string {
-	// パターン1: session-{full-uuid}-{suffix} の形式（最優先）
+	// パターン1: ws-{sessionId8}-{name10}-{time4} の形式（新規則、最優先）
+	// 例: ws-0fcfba18-session0fc-7973 または ws-0fcfba18-ws0fcfba18-7973
+	if strings.HasPrefix(workspaceName, "ws-") {
+		// "ws-" を除去
+		remaining := workspaceName[3:]
+		parts := strings.Split(remaining, "-")
+		
+		// 最低3つの部分が必要: {sessionId8}-{name10}-{time4}
+		if len(parts) >= 3 {
+			sessionIdPart := parts[0]
+			// セッションIDは8文字の英数字
+			if len(sessionIdPart) == 8 && isAlphaNumeric(sessionIdPart) {
+				return sessionIdPart
+			}
+		}
+		
+		// 特別なケース: ws-{sessionId8}-ws{sessionId8}-{time4} の形式
+		// 例: ws-0fcfba18-ws0fcfba18-7973
+		if len(parts) >= 3 {
+			sessionIdPart := parts[0]
+			secondPart := parts[1]
+			// 第2部分が "ws" + セッションID の形式かチェック
+			if len(sessionIdPart) == 8 && isAlphaNumeric(sessionIdPart) &&
+				strings.HasPrefix(secondPart, "ws") && len(secondPart) == 10 &&
+				secondPart[2:] == sessionIdPart {
+				return sessionIdPart
+			}
+		}
+	}
+
+	// パターン2: session-{full-uuid}-{suffix} の形式（旧規則、後方互換性）
 	// 例: session-29229ea1-8c41-4ca2-b064-7a7a7672dd1a-keruta
 	if strings.HasPrefix(workspaceName, "session-") {
 		// "session-" を除去
@@ -443,19 +473,19 @@ func extractSessionIDFromWorkspaceName(workspaceName string) string {
 		}
 	}
 
-	// パターン2: {full-uuid}-{suffix} の形式
+	// パターン3: {full-uuid}-{suffix} の形式
 	if uuid := extractUUIDPattern(workspaceName); uuid != "" {
 		return uuid
 	}
 
-	// パターン3: 完全なUUID形式（ハイフンを含む）
+	// パターン4: 完全なUUID形式（ハイフンを含む）
 	if len(workspaceName) >= 32 && strings.Contains(workspaceName, "-") {
 		if isValidUUIDFormat(workspaceName) {
 			return workspaceName
 		}
 	}
 
-	// パターン4: {sessionId}-{suffix} の形式（UUIDの最初の部分のみ - 後方互換性）
+	// パターン5: {sessionId}-{suffix} の形式（UUIDの最初の部分のみ - 後方互換性）
 	parts := strings.Split(workspaceName, "-")
 	if len(parts) >= 2 {
 		possibleID := parts[0]
