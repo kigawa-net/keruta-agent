@@ -4,9 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -70,7 +68,7 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	// PIDファイルの作成
 	if daemonPidFile != "" {
 		if err := writePIDFile(daemonPidFile); err != nil {
-			return fmt.Errorf("PIDファイルの作成に失敗しました: %w", err)
+			return fmt.Errorf("PID file creation failed: %w", err)
 		}
 		defer func() {
 			removePIDFile(daemonPidFile)
@@ -82,7 +80,7 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	if daemonLogFile != "" {
 		file, err := os.OpenFile(daemonLogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0666)
 		if err != nil {
-			return fmt.Errorf("ログファイルの作成に失敗しました: %w", err)
+			return fmt.Errorf("log file creation failed: %w", err)
 		}
 		defer func() {
 			if closeErr := file.Close(); closeErr != nil {
@@ -171,7 +169,7 @@ func pollAndExecuteSessionTasks(ctx context.Context, apiClient *api.Client, logg
 
 		session, err := apiClient.GetSession(daemonSessionID)
 		if err != nil {
-			return fmt.Errorf("セッション情報の取得に失敗しました: %w", err)
+			return fmt.Errorf("session info retrieval failed: %w", err)
 		}
 
 		// セッションが完了している場合はタスクポーリングをスキップ
@@ -183,7 +181,7 @@ func pollAndExecuteSessionTasks(ctx context.Context, apiClient *api.Client, logg
 		// セッション用のPENDINGタスクを取得
 		tasks, err := apiClient.GetPendingTasksForSession(daemonSessionID)
 		if err != nil {
-			return fmt.Errorf("セッションタスクの取得に失敗しました: %w", err)
+			return fmt.Errorf("session task retrieval failed: %w", err)
 		}
 
 		if len(tasks) == 0 {
@@ -213,7 +211,7 @@ func pollAndExecuteSessionTasks(ctx context.Context, apiClient *api.Client, logg
 		// レガシーサポート: ワークスペース用のタスクを取得
 		tasks, err := apiClient.GetPendingTasksForWorkspace(daemonWorkspaceID)
 		if err != nil {
-			return fmt.Errorf("ワークスペースタスクの取得に失敗しました: %w", err)
+			return fmt.Errorf("workspace task retrieval failed: %w", err)
 		}
 
 		if len(tasks) == 0 {
@@ -236,15 +234,10 @@ func pollAndExecuteSessionTasks(ctx context.Context, apiClient *api.Client, logg
 			}
 		}
 	} else {
-		return fmt.Errorf("セッションIDまたはワークスペースIDが設定されていません")
+		return fmt.Errorf("session ID or workspace ID not configured")
 	}
 
 	return nil
-}
-
-// pollAndExecuteTasks はAPIサーバーからタスクをポーリングし、実行します（レガシー関数）
-func pollAndExecuteTasks(ctx context.Context, apiClient *api.Client, logger *logrus.Entry) error {
-	return pollAndExecuteSessionTasks(ctx, apiClient, logger)
 }
 
 // executeTask は個別のタスクを実行します
@@ -255,7 +248,7 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 	// 環境変数にタスクIDを設定
 	oldTaskID := os.Getenv("KERUTA_TASK_ID")
 	if err := os.Setenv("KERUTA_TASK_ID", task.ID); err != nil {
-		return fmt.Errorf("環境変数の設定に失敗しました: %w", err)
+		return fmt.Errorf("environment variable setup failed: %w", err)
 	}
 	defer func() {
 		if err := os.Setenv("KERUTA_TASK_ID", oldTaskID); err != nil {
@@ -265,7 +258,7 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 
 	// タスク開始の通知
 	if err := apiClient.StartTask(task.ID); err != nil {
-		return fmt.Errorf("タスク開始の通知に失敗しました: %w", err)
+		return fmt.Errorf("task start notification failed: %w", err)
 	}
 
 	// スクリプトの取得
@@ -274,7 +267,7 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 		if failErr := apiClient.FailTask(task.ID, "スクリプトの取得に失敗しました", "SCRIPT_FETCH_ERROR"); failErr != nil {
 			taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
 		}
-		return fmt.Errorf("スクリプトの取得に失敗しました: %w", err)
+		return fmt.Errorf("script retrieval failed: %w", err)
 	}
 
 	// スクリプト内容を表示
@@ -290,7 +283,7 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 		if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("Claude タスクの実行に失敗しました: %v", err), "CLAUDE_EXECUTION_ERROR"); failErr != nil {
 			taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
 		}
-		return fmt.Errorf("Claude タスクの実行に失敗しました: %w", err)
+		return fmt.Errorf("claude task execution failed: %w", err)
 	}
 
 	// タスク完了後にGit変更をプッシュ
@@ -300,7 +293,7 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 
 	// タスク成功の通知
 	if err := apiClient.SuccessTask(task.ID, "タスクが正常に完了しました"); err != nil {
-		return fmt.Errorf("タスク成功の通知に失敗しました: %w", err)
+		return fmt.Errorf("task success notification failed: %w", err)
 	}
 
 	taskLogger.Info("✅ タスクが正常に完了しました")
@@ -313,7 +306,11 @@ func writePIDFile(pidFile string) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if err := file.Close(); err != nil {
+			// ログ出力は行わない（ファイルクローズエラーは通常クリティカルではない）
+		}
+	}()
 
 	_, err = fmt.Fprintf(file, "%d\n", os.Getpid())
 	return err
@@ -324,650 +321,6 @@ func removePIDFile(pidFile string) {
 	if err := os.Remove(pidFile); err != nil {
 		logrus.WithError(err).WithField("pid_file", pidFile).Error("PIDファイルの削除に失敗しました")
 	}
-}
-
-// initializeRepositoryForSession はセッションのGitリポジトリを初期化します
-func initializeRepositoryForSession(apiClient *api.Client, sessionID string, logger *logrus.Entry) error {
-	logger.Info("🔧 セッションのリポジトリ情報を取得しています...")
-
-	// セッション情報を取得
-	session, err := apiClient.GetSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("セッション情報の取得に失敗: %w", err)
-	}
-
-	logger.WithField("session", session).Debug("セッション情報取得完了")
-
-	// リポジトリURLがない場合はスキップ
-	if session.RepositoryURL == "" {
-		logger.Warn("セッションにリポジトリURLが設定されていないため、リポジトリ初期化をスキップします")
-		return nil
-	}
-
-	// 作業ディレクトリのパスを決定
-	gitTemplateConfig := &git.SessionTemplateConfig{
-		TemplateID:        "",
-		TemplateName:      "",
-		TemplatePath:      ".",
-		PreferredKeywords: []string{},
-		Parameters:        map[string]string{},
-	}
-
-	// セッションにTemplateConfigがある場合はそのデータも使用
-	if session.TemplateConfig != nil {
-		gitTemplateConfig.TemplateID = session.TemplateConfig.TemplateID
-		gitTemplateConfig.TemplateName = session.TemplateConfig.TemplateName
-		gitTemplateConfig.TemplatePath = session.TemplateConfig.TemplatePath
-		gitTemplateConfig.PreferredKeywords = session.TemplateConfig.PreferredKeywords
-		gitTemplateConfig.Parameters = session.TemplateConfig.Parameters
-	}
-
-	workDir := git.DetermineWorkingDirectory(sessionID, session.RepositoryURL)
-
-	logger.WithFields(logrus.Fields{
-		"repository_url": session.RepositoryURL,
-		"repository_ref": session.RepositoryRef,
-		"working_dir":    workDir,
-	}).Info("📂 Gitリポジトリを初期化しています...")
-
-	// Gitリポジトリを作成
-	repo := git.NewRepository(
-		session.RepositoryURL,
-		session.RepositoryRef,
-		workDir,
-		logger.WithField("component", "git"),
-	)
-
-	// クローンまたはプル実行
-	if err := repo.CloneOrPull(); err != nil {
-		return fmt.Errorf("リポジトリのクローン/プルに失敗: %w", err)
-	}
-
-	// 環境変数にワーキングディレクトリを設定
-	if err := os.Setenv("KERUTA_WORKING_DIR", workDir); err != nil {
-		logger.WithError(err).Warn("環境変数KERUTA_WORKING_DIRの設定に失敗しました")
-	}
-
-	logger.WithField("working_dir", workDir).Info("✅ リポジトリの初期化が完了しました")
-	return nil
-}
-
-// getWorkspaceName はCoderワークスペース名を取得します
-func getWorkspaceName() string {
-	// Coder環境変数から取得（最も一般的）
-	if workspaceName := os.Getenv("CODER_WORKSPACE_NAME"); workspaceName != "" {
-		return workspaceName
-	}
-
-	// ホスト名から取得（Coderワークスペース内では一般的にワークスペース名がホスト名になる）
-	if hostname, err := os.Hostname(); err == nil && hostname != "" && hostname != "localhost" {
-		return hostname
-	}
-
-	// PWDの最後のディレクトリ名から推測
-	if pwd := os.Getenv("PWD"); pwd != "" {
-		parts := strings.Split(pwd, "/")
-		if len(parts) > 0 {
-			lastDir := parts[len(parts)-1]
-			if lastDir != "" && strings.HasPrefix(lastDir, "session-") {
-				return lastDir
-			}
-		}
-	}
-
-	return ""
-}
-
-// extractSessionIDFromWorkspaceName はワークスペース名からセッションIDを抽出します
-func extractSessionIDFromWorkspaceName(workspaceName string) string {
-	// パターン1: ws-{sessionId8}-{name10}-{time4} の形式（新規則、最優先）
-	// 例: ws-0fcfba18-session0fc-7973 または ws-0fcfba18-ws0fcfba18-7973
-	if strings.HasPrefix(workspaceName, "ws-") {
-		// "ws-" を除去
-		remaining := workspaceName[3:]
-		parts := strings.Split(remaining, "-")
-
-		// 最低3つの部分が必要: {sessionId8}-{name10}-{time4}
-		if len(parts) >= 3 {
-			sessionIdPart := parts[0]
-			// セッションIDは8文字の英数字
-			if len(sessionIdPart) == 8 && isAlphaNumeric(sessionIdPart) {
-				return sessionIdPart
-			}
-		}
-
-		// 特別なケース: ws-{sessionId8}-ws{sessionId8}-{time4} の形式
-		// 例: ws-0fcfba18-ws0fcfba18-7973
-		if len(parts) >= 3 {
-			sessionIdPart := parts[0]
-			secondPart := parts[1]
-			// 第2部分が "ws" + セッションID の形式かチェック
-			if len(sessionIdPart) == 8 && isAlphaNumeric(sessionIdPart) &&
-				strings.HasPrefix(secondPart, "ws") && len(secondPart) == 10 &&
-				secondPart[2:] == sessionIdPart {
-				return sessionIdPart
-			}
-		}
-	}
-
-	// パターン2: session-{full-uuid}-{suffix} の形式（旧規則、後方互換性）
-	// 例: session-29229ea1-8c41-4ca2-b064-7a7a7672dd1a-keruta
-	if strings.HasPrefix(workspaceName, "session-") {
-		// "session-" を除去
-		remaining := workspaceName[8:]
-
-		// UUID形式のパターンを探す (8-4-4-4-12の形式)
-		if uuid := extractUUIDPattern(remaining); uuid != "" {
-			return uuid
-		}
-
-		// フォールバック: 最初の部分だけを取得（後方互換性のため）
-		parts := strings.Split(remaining, "-")
-		if len(parts) >= 1 {
-			sessionID := parts[0]
-			if len(sessionID) >= 8 {
-				return sessionID
-			}
-		}
-	}
-
-	// パターン3: {full-uuid}-{suffix} の形式
-	if uuid := extractUUIDPattern(workspaceName); uuid != "" {
-		return uuid
-	}
-
-	// パターン4: 完全なUUID形式（ハイフンを含む）
-	if len(workspaceName) >= 32 && strings.Contains(workspaceName, "-") {
-		if isValidUUIDFormat(workspaceName) {
-			return workspaceName
-		}
-	}
-
-	// パターン5: {sessionId}-{suffix} の形式（UUIDの最初の部分のみ - 後方互換性）
-	parts := strings.Split(workspaceName, "-")
-	if len(parts) >= 2 {
-		possibleID := parts[0]
-		// UUIDの最初の部分らしき文字列（8文字以上の英数字）
-		if len(possibleID) >= 8 && isAlphaNumeric(possibleID) {
-			return possibleID
-		}
-	}
-
-	return ""
-}
-
-// resolveFullSessionID は部分的なセッションIDまたはワークスペース名から完全なUUIDを取得します
-func resolveFullSessionID(apiClient *api.Client, partialID string, logger *logrus.Entry) string {
-	// 既に完全なUUID形式の場合はそのまま返す
-	if isValidUUIDFormat(partialID) {
-		return partialID
-	}
-
-	// 部分的なIDが短すぎる場合はそのまま返す
-	if len(partialID) < 4 {
-		logger.WithField("partialId", partialID).Debug("部分的なIDが短すぎるため、APIで検索をスキップします")
-		return partialID
-	}
-
-	logger.WithField("partialId", partialID).Info("部分的なセッションIDから完全なUUIDを検索しています...")
-
-	// まず、ワークスペース名による完全一致検索を試す
-	// ワークスペース名が "session-{uuid}-{suffix}" の形式の場合、ワークスペース名全体で検索
-	if strings.HasPrefix(partialID, "session-") || len(partialID) > 20 {
-		workspaceName := getWorkspaceName()
-		if workspaceName != "" && workspaceName != partialID {
-			logger.WithField("workspaceName", workspaceName).Info("ワークスペース名による完全一致検索を試行中...")
-			if session, err := apiClient.SearchSessionByName(workspaceName); err == nil {
-				logger.WithFields(logrus.Fields{
-					"workspaceName": workspaceName,
-					"sessionId":     session.ID,
-					"sessionName":   session.Name,
-				}).Info("ワークスペース名による完全一致でセッションを発見しました")
-				return session.ID
-			}
-		}
-	}
-
-	// 部分的なIDから完全なUUIDを検索
-	session, err := apiClient.SearchSessionByPartialID(partialID)
-	if err != nil {
-		logger.WithError(err).WithField("partialId", partialID).Warning("部分的なIDでの検索に失敗しました。元のIDを使用します")
-		return partialID
-	}
-
-	logger.WithFields(logrus.Fields{
-		"partialId":   partialID,
-		"fullId":      session.ID,
-		"sessionName": session.Name,
-	}).Info("完全なセッションUUIDを取得しました")
-
-	return session.ID
-}
-
-// setupTaskBranch はタスク専用のブランチを作成・チェックアウトします
-func setupTaskBranch(apiClient *api.Client, sessionID, taskID string, logger *logrus.Entry) error {
-	// 作業ディレクトリが設定されているかチェック
-	workDir := os.Getenv("KERUTA_WORKING_DIR")
-	if workDir == "" {
-		logger.Debug("作業ディレクトリが設定されていないため、ブランチ作成をスキップします")
-		return nil
-	}
-
-	// ディレクトリがGitリポジトリかチェック
-	gitDir := filepath.Join(workDir, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		logger.Debug("作業ディレクトリがGitリポジトリではないため、ブランチ作成をスキップします")
-		return nil
-	}
-
-	// セッション情報を取得してリポジトリ設定を確認
-	session, err := apiClient.GetSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("セッション情報の取得に失敗: %w", err)
-	}
-
-	if session.RepositoryURL == "" {
-		logger.Debug("セッションにリポジトリURLが設定されていないため、ブランチ作成をスキップします")
-		return nil
-	}
-
-	// タスク専用のブランチ名を生成
-	branchName := git.GenerateBranchName(sessionID, taskID)
-
-	logger.WithFields(logrus.Fields{
-		"session_id":  sessionID,
-		"task_id":     taskID,
-		"branch_name": branchName,
-		"working_dir": workDir,
-	}).Info("🌿 タスク専用ブランチを作成・チェックアウトしています...")
-
-	// Gitリポジトリインスタンスを作成
-	repo := git.NewRepositoryWithBranch(
-		session.RepositoryURL,
-		session.RepositoryRef,
-		workDir,
-		branchName,
-		logger.WithField("component", "git"),
-	)
-
-	// 新しいブランチを作成・チェックアウト
-	return repo.CreateAndCheckoutBranch()
-}
-
-// pushTaskChanges はタスク完了後に変更をコミット・プッシュします
-func pushTaskChanges(apiClient *api.Client, sessionID, taskID string, logger *logrus.Entry) error {
-	// 作業ディレクトリが設定されているかチェック
-	workDir := os.Getenv("KERUTA_WORKING_DIR")
-	if workDir == "" {
-		logger.Debug("作業ディレクトリが設定されていないため、プッシュをスキップします")
-		return nil
-	}
-
-	// ディレクトリがGitリポジトリかチェック
-	gitDir := filepath.Join(workDir, ".git")
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		logger.Debug("作業ディレクトリがGitリポジトリではないため、プッシュをスキップします")
-		return nil
-	}
-
-	// セッション情報を取得してリポジトリ設定を確認
-	session, err := apiClient.GetSession(sessionID)
-	if err != nil {
-		return fmt.Errorf("セッション情報の取得に失敗: %w", err)
-	}
-
-	if session.RepositoryURL == "" {
-		logger.Debug("セッションにリポジトリURLが設定されていないため、プッシュをスキップします")
-		return nil
-	}
-
-	// プッシュが無効化されているかチェック（環境変数）
-	if os.Getenv("KERUTA_DISABLE_AUTO_PUSH") == "true" {
-		logger.Info("自動プッシュが無効化されています")
-		return nil
-	}
-
-	logger.WithFields(logrus.Fields{
-		"session_id":  sessionID,
-		"task_id":     taskID,
-		"working_dir": workDir,
-	}).Info("🚀 タスク完了後の変更をコミット・プッシュしています...")
-
-	// Gitリポジトリインスタンスを作成
-	repo := git.NewRepositoryWithBranchAndPush(
-		session.RepositoryURL,
-		session.RepositoryRef,
-		workDir,
-		"",   // ブランチ名は不要（現在のブランチを使用）
-		true, // AutoPush有効
-		logger.WithField("component", "git"),
-	)
-
-	// コミットメッセージを生成
-	branchName := git.GenerateBranchName(sessionID, taskID)
-	commitMessage := fmt.Sprintf("Task %s completed\n\nTask executed in branch: %s\nSession: %s",
-		taskID[:8], branchName, sessionID[:8])
-
-	// 変更をコミット・プッシュ
-	force := os.Getenv("KERUTA_FORCE_PUSH") == "true"
-	return repo.CommitAndPushChanges(commitMessage, force)
-}
-
-// extractUUIDPattern はUUID形式のパターンを抽出します
-func extractUUIDPattern(text string) string {
-	// UUID形式: 8-4-4-4-12 (例: 29229ea1-8c41-4ca2-b064-7a7a7672dd1a)
-	parts := strings.Split(text, "-")
-	if len(parts) >= 5 {
-		// 最初の5つの部分がUUID形式かチェック
-		if len(parts[0]) == 8 && len(parts[1]) == 4 && len(parts[2]) == 4 &&
-			len(parts[3]) == 4 && len(parts[4]) == 12 {
-			// 各部分が16進数かチェック
-			uuid := strings.Join(parts[0:5], "-")
-			if isValidUUIDFormat(uuid) {
-				return uuid
-			}
-		}
-	}
-	return ""
-}
-
-// isValidUUIDFormat はUUID形式として有効かをチェックします
-func isValidUUIDFormat(uuid string) bool {
-	// 基本的な長さチェック (36文字: 32文字 + 4つのハイフン)
-	if len(uuid) != 36 {
-		return false
-	}
-
-	// ハイフンの位置チェック
-	if uuid[8] != '-' || uuid[13] != '-' || uuid[18] != '-' || uuid[23] != '-' {
-		return false
-	}
-
-	// 各部分が16進数かチェック
-	parts := strings.Split(uuid, "-")
-	if len(parts) != 5 {
-		return false
-	}
-
-	for _, part := range parts {
-		for _, r := range part {
-			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
-				return false
-			}
-		}
-	}
-
-	return true
-}
-
-// isAlphaNumeric は文字列が英数字のみかチェックします
-func isAlphaNumeric(s string) bool {
-	for _, r := range s {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
-			return false
-		}
-	}
-	return true
-}
-
-// executeTmuxClaudeTask はtmux環境でClaude実行タスクを実行します
-func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID string, taskContent string, taskLogger *logrus.Entry) error {
-	taskLogger.Info("🎯 tmux環境でClaude実行タスクを開始しています...")
-
-	// セッションIDからtmuxセッション名を生成（1セッション = 1tmuxセッション）
-	var tmuxSessionName string
-	if daemonSessionID != "" {
-		tmuxSessionName = fmt.Sprintf("keruta-session-%s", daemonSessionID[:8])
-	} else {
-		// フォールバック: タスクIDベース（後方互換性）
-		tmuxSessionName = fmt.Sprintf("keruta-task-%s", taskID[:8])
-	}
-
-	// 既存のtmuxセッションをチェック
-	if _, err := getTmuxSessionStatus(tmuxSessionName); err == nil {
-		taskLogger.WithFields(logrus.Fields{
-			"existing_session": tmuxSessionName,
-			"session_id":       daemonSessionID,
-		}).Info("既存のtmuxセッションを再利用します")
-
-		// 既存セッションでClaude実行
-		return executeTmuxCommandInSession(ctx, apiClient, taskID, taskContent, tmuxSessionName, taskLogger)
-	}
-
-	// ~/keruta ディレクトリの存在を確認・作成
-	kerutaDir := os.ExpandEnv("$HOME/keruta")
-	if err := ensureDirectory(kerutaDir); err != nil {
-		return fmt.Errorf("~/kerutaディレクトリの作成に失敗: %w", err)
-	}
-
-	taskLogger.WithFields(logrus.Fields{
-		"tmux_session": tmuxSessionName,
-		"working_dir":  kerutaDir,
-		"task_content": taskContent,
-	}).Info("tmuxセッションでClaude実行を開始します")
-
-	// Claude実行コマンドを構築
-	claudeCmd := fmt.Sprintf(`claude -p "%s" --dangerously-skip-permissions`, strings.ReplaceAll(taskContent, `"`, `\"`))
-
-	// tmuxコマンドを構築 - セッション作成、ディレクトリ移動、Claude実行
-	tmuxCmd := exec.CommandContext(ctx, "tmux",
-		"new-session", "-d", "-s", tmuxSessionName,
-		"-c", kerutaDir,
-		claudeCmd)
-
-	taskLogger.WithFields(logrus.Fields{
-		"tmux_session": tmuxSessionName,
-		"working_dir":  kerutaDir,
-		"command":      claudeCmd,
-	}).Info("🖥️ tmuxコマンドを構築しました")
-
-	// コマンド実行とログ収集
-	return executeTmuxCommand(ctx, tmuxCmd, apiClient, taskID, tmuxSessionName, taskLogger)
-}
-
-// ensureDirectory はディレクトリの存在を確認し、存在しない場合は作成します
-func ensureDirectory(dirPath string) error {
-	if _, err := os.Stat(dirPath); os.IsNotExist(err) {
-		return os.MkdirAll(dirPath, 0755)
-	}
-	return nil
-}
-
-// executeTmuxCommand はtmuxコマンドを実行し、出力を監視します
-func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Client, taskID, sessionName string, logger *logrus.Entry) error {
-	logger.Info("🚀 tmuxセッションを起動しています...")
-
-	// tmuxセッション開始
-	logger.WithFields(logrus.Fields{
-		"session": sessionName,
-		"command": strings.Join(cmd.Args, " "),
-	}).Info("⚡ tmuxセッションを開始します")
-
-	if err := cmd.Start(); err != nil {
-		logger.WithError(err).WithField("session", sessionName).Error("❌ tmuxセッション開始に失敗")
-		return fmt.Errorf("tmuxセッション開始に失敗: %w", err)
-	}
-
-	logger.WithField("session", sessionName).Info("✅ tmuxセッションが開始されました")
-
-	// tmuxセッションの出力を監視
-	logger.WithField("session", sessionName).Info("👁️ tmux出力監視を開始します")
-	go func() {
-		ticker := time.NewTicker(1 * time.Second) // より頻繁にキャプチャ
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				logger.WithField("session", sessionName).Debug("コンテキストキャンセルによりtmux監視を停止")
-				return
-			case <-ticker.C:
-				if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
-					logger.WithError(err).Debug("tmux出力キャプチャに失敗しました")
-				}
-			}
-		}
-	}()
-
-	// tmuxセッションの完了を待機
-	if err := cmd.Wait(); err != nil {
-		// tmuxセッションを明示的に終了
-		_ = killTmuxSession(sessionName, logger)
-		return fmt.Errorf("tmuxセッション実行に失敗: %w", err)
-	}
-
-	// 最終的な出力をキャプチャ
-	if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
-		logger.WithError(err).Warning("最終出力キャプチャに失敗しました")
-	}
-
-	// tmuxセッションはクリーンアップしない（再利用のため保持）
-	logger.WithField("session", sessionName).Info("tmuxセッションを保持します（再利用のため）")
-
-	logger.Info("✅ tmux Claude実行タスクが完了しました")
-	return nil
-}
-
-// captureTmuxOutput はtmuxセッションの出力をキャプチャしてAPIに送信します
-func captureTmuxOutput(apiClient *api.Client, taskID, sessionName string, logger *logrus.Entry) error {
-	logger.WithField("session", sessionName).Debug("🔍 tmuxセッション出力キャプチャを開始")
-
-	// まずtmuxセッションが存在するかチェック
-	if _, err := getTmuxSessionStatus(sessionName); err != nil {
-		logger.WithError(err).WithField("session", sessionName).Debug("tmuxセッションが存在しないため出力キャプチャをスキップ")
-		return nil // セッションが存在しない場合はエラーにしない
-	}
-
-	// tmux capture-pane で出力を取得（履歴も含む）
-	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-3000")
-	output, err := cmd.Output()
-	if err != nil {
-		logger.WithError(err).WithField("session", sessionName).Debug("tmux出力キャプチャに失敗（セッションが存在しない可能性）")
-		return nil // セッション出力キャプチャの失敗は致命的エラーにしない
-	}
-
-	// 出力が空でない場合のみログ送信
-	outputStr := strings.TrimSpace(string(output))
-	if outputStr != "" {
-		logger.WithFields(logrus.Fields{
-			"session":     sessionName,
-			"lines_count": len(strings.Split(outputStr, "\n")),
-		}).Debug("📄 tmux出力をキャプチャしました")
-
-		lines := strings.Split(outputStr, "\n")
-		for _, line := range lines {
-			if strings.TrimSpace(line) != "" {
-				// ログにプレフィックスを追加してtmux出力であることを明示
-				logMessage := fmt.Sprintf("[tmux:%s] %s", sessionName, line)
-				logger.Info(logMessage)
-				// APIにログを送信
-				if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
-					logger.WithError(sendErr).Warning("ログ送信に失敗しました")
-				}
-			}
-		}
-	} else {
-		logger.WithField("session", sessionName).Debug("tmux出力は空でした")
-	}
-
-	return nil
-}
-
-// killTmuxSession はtmuxセッションを終了します
-func killTmuxSession(sessionName string, logger *logrus.Entry) error {
-	cmd := exec.Command("tmux", "kill-session", "-t", sessionName)
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("tmuxセッション終了に失敗: %w", err)
-	}
-
-	logger.WithField("session", sessionName).Info("tmuxセッションを終了しました")
-	return nil
-}
-
-// getTmuxSessionStatus は既存のtmuxセッションの状態を確認します
-func getTmuxSessionStatus(sessionName string) (string, error) {
-	cmd := exec.Command("tmux", "has-session", "-t", sessionName)
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("tmuxセッションが存在しません: %w", err)
-	}
-	return sessionName, nil
-}
-
-// executeTmuxCommandInSession は既存のtmuxセッション内でコマンドを実行します
-func executeTmuxCommandInSession(ctx context.Context, apiClient *api.Client, taskID, taskContent, sessionName string, logger *logrus.Entry) error {
-	logger.WithField("session", sessionName).Info("🔄 既存のtmuxセッション内でClaude実行タスクを実行します")
-
-	// Claudeコマンドを構築
-	claudeCmd := fmt.Sprintf(`claude -p "%s" --dangerously-skip-permissions`, strings.ReplaceAll(taskContent, `"`, `\"`))
-
-	// コマンド送信前の状態をログ出力
-	logger.WithFields(logrus.Fields{
-		"session": sessionName,
-		"command": claudeCmd,
-	}).Info("📤 tmuxセッションにコマンドを送信します")
-
-	// 既存のtmuxセッション内でClaude実行
-	sendCmd := exec.CommandContext(ctx, "tmux", "send-keys", "-t", sessionName, claudeCmd, "Enter")
-
-	// コマンドの標準出力・標準エラーをキャプチャ
-	output, err := sendCmd.CombinedOutput()
-	if err != nil {
-		logger.WithError(err).WithFields(logrus.Fields{
-			"session": sessionName,
-			"output":  string(output),
-		}).Error("❌ tmuxセッション内でのコマンド実行に失敗")
-		return fmt.Errorf("tmuxセッション内でのコマンド実行に失敗しました: %w", err)
-	}
-
-	// sendCmdの出力をログ表示
-	if len(output) > 0 {
-		logger.WithFields(logrus.Fields{
-			"session": sessionName,
-			"output":  strings.TrimSpace(string(output)),
-		}).Info("📋 tmux send-keysコマンドの出力")
-
-		// APIにもログ送信
-		logMessage := fmt.Sprintf("[tmux:%s:send-cmd] %s", sessionName, strings.TrimSpace(string(output)))
-		if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
-			logger.WithError(sendErr).Warning("send-keysログ送信に失敗しました")
-		}
-	} else {
-		logger.WithField("session", sessionName).Info("✅ コマンドが正常に送信されました")
-
-		// コマンド送信成功をAPIにログ送信
-		logMessage := fmt.Sprintf("[tmux:%s:send-cmd] コマンドが正常に送信されました: %s", sessionName, claudeCmd)
-		if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
-			logger.WithError(sendErr).Warning("コマンド送信ログの送信に失敗しました")
-		}
-	}
-
-	// 出力を監視
-	logger.WithField("session", sessionName).Info("👁️ tmux出力監視を開始します")
-	go func() {
-		ticker := time.NewTicker(1 * time.Second) // より頻繁に監視
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-ctx.Done():
-				logger.WithField("session", sessionName).Debug("コンテキストキャンセルによりtmux監視を停止")
-				return
-			case <-ticker.C:
-				if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
-					logger.WithError(err).Debug("tmux出力キャプチャに失敗しました")
-				}
-			}
-		}
-	}()
-
-	// 少し待機してから最終出力をキャプチャ
-	time.Sleep(3 * time.Second)
-	if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
-		logger.WithError(err).Warning("最終出力キャプチャに失敗しました")
-	}
-
-	logger.WithField("session", sessionName).Info("✅ 既存セッション内でのClaude実行タスクが完了しました")
-	return nil
 }
 
 func init() {
