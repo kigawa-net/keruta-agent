@@ -96,6 +96,9 @@ func runDaemon(_ *cobra.Command, _ []string) error {
 	// APIクライアントの初期化
 	apiClient := api.NewClient()
 
+	// ログのAPI送信を有効化
+	logger.SetAPIClient(apiClient)
+
 	// Gitコマンドの利用可能性を確認
 	if err := git.ValidateGitCommand(); err != nil {
 		daemonLogger.WithError(err).Warn("Gitコマンドが利用できません。リポジトリ機能は無効になります")

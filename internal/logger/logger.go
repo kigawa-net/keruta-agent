@@ -2,11 +2,73 @@ package logger
 
 import (
 	"os"
+	"strings"
 
 	"keruta-agent/internal/config"
 
 	"github.com/sirupsen/logrus"
 )
+
+// LogSender はログを送信するためのインターフェースです
+type LogSender interface {
+	SendLog(taskID string, level string, message string) error
+}
+
+// APILogHook はAPIにログを送信するためのHookです
+type APILogHook struct {
+	client LogSender
+}
+
+// NewAPILogHook は新しいAPILogHookを作成します
+func NewAPILogHook(client LogSender) *APILogHook {
+	return &APILogHook{client: client}
+}
+
+// Levels はHookが処理するログレベルを返します
+func (hook *APILogHook) Levels() []logrus.Level {
+	return []logrus.Level{
+		logrus.InfoLevel,
+		logrus.WarnLevel,
+		logrus.ErrorLevel,
+		logrus.FatalLevel,
+		logrus.PanicLevel,
+	}
+}
+
+// Fire はログエントリーをAPIに送信します
+func (hook *APILogHook) Fire(entry *logrus.Entry) error {
+	if hook.client == nil {
+		return nil
+	}
+
+	// タスクIDを取得
+	taskID := config.GetTaskID()
+	if taskID == "" {
+		return nil // タスクIDが設定されていない場合は送信しない
+	}
+
+	// ログレベルを文字列に変換
+	level := strings.ToUpper(entry.Level.String())
+
+	// APIにログを送信（エラーは無視）
+	go func() {
+		_ = hook.client.SendLog(taskID, level, entry.Message)
+	}()
+
+	return nil
+}
+
+var apiLogHook *APILogHook
+
+// SetAPIClient はAPIクライアントを設定してログのAPI送信を有効化します
+func SetAPIClient(client LogSender) {
+	if apiLogHook != nil {
+		logrus.StandardLogger().ReplaceHooks(make(logrus.LevelHooks))
+	}
+	
+	apiLogHook = NewAPILogHook(client)
+	logrus.AddHook(apiLogHook)
+}
 
 // Init はロガーを初期化します
 func Init() error {
