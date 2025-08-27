@@ -86,12 +86,46 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 		"command": strings.Join(cmd.Args, " "),
 	}).Info("⚡ tmuxセッションを開始します")
 
-	if err := cmd.Start(); err != nil {
-		logger.WithError(err).WithField("session", sessionName).Error("❌ tmuxセッション開始に失敗")
+	// コマンドの標準出力・標準エラーをキャプチャ
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logger.WithError(err).WithFields(logrus.Fields{
+			"session": sessionName,
+			"output":  string(output),
+		}).Error("❌ tmuxセッション開始に失敗")
+
+		// APIにもエラー出力を送信
+		if len(output) > 0 {
+			logMessage := fmt.Sprintf("[tmux:%s:start-cmd] %s", sessionName, strings.TrimSpace(string(output)))
+			if sendErr := apiClient.SendLog(taskID, "ERROR", logMessage); sendErr != nil {
+				logger.WithError(sendErr).Warning("tmux開始エラーログ送信に失敗しました")
+			}
+		}
+
 		return fmt.Errorf("tmuxセッション開始に失敗: %w", err)
 	}
 
-	logger.WithField("session", sessionName).Info("✅ tmuxセッションが開始されました")
+	// tmux開始コマンドの出力をログ表示
+	if len(output) > 0 {
+		logger.WithFields(logrus.Fields{
+			"session": sessionName,
+			"output":  strings.TrimSpace(string(output)),
+		}).Info("📋 tmux開始コマンドの出力")
+
+		// APIにもログ送信
+		logMessage := fmt.Sprintf("[tmux:%s:start-cmd] %s", sessionName, strings.TrimSpace(string(output)))
+		if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
+			logger.WithError(sendErr).Warning("tmux開始ログ送信に失敗しました")
+		}
+	} else {
+		logger.WithField("session", sessionName).Info("✅ tmuxセッションが正常に開始されました")
+
+		// セッション開始成功をAPIにログ送信
+		logMessage := fmt.Sprintf("[tmux:%s:start-cmd] tmuxセッションが正常に開始されました", sessionName)
+		if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
+			logger.WithError(sendErr).Warning("tmux開始成功ログの送信に失敗しました")
+		}
+	}
 
 	// tmuxセッションの出力を監視
 	logger.WithField("session", sessionName).Info("👁️ tmux出力監視を開始します")
@@ -112,12 +146,8 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 		}
 	}()
 
-	// tmuxセッションの完了を待機
-	if err := cmd.Wait(); err != nil {
-		// tmuxセッションを明示的に終了
-		_ = killTmuxSession(sessionName, logger)
-		return fmt.Errorf("tmuxセッション実行に失敗: %w", err)
-	}
+	// tmuxは detached モードで実行されているため、完了を待つ必要はない
+	logger.WithField("session", sessionName).Info("🔄 tmuxセッションはバックグラウンドで実行中です")
 
 	// 最終的な出力をキャプチャ
 	if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
@@ -143,11 +173,35 @@ func captureTmuxOutput(apiClient *api.Client, taskID, sessionName string, logger
 
 	// tmux capture-pane で出力を取得（履歴も含む）
 	cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-3000")
-	output, err := cmd.Output()
+
+	logger.WithFields(logrus.Fields{
+		"session": sessionName,
+		"command": strings.Join(cmd.Args, " "),
+	}).Debug("📸 tmux capture-paneコマンドを実行します")
+
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		logger.WithError(err).WithField("session", sessionName).Debug("tmux出力キャプチャに失敗（セッションが存在しない可能性）")
+		logger.WithError(err).WithFields(logrus.Fields{
+			"session": sessionName,
+			"output":  string(output),
+		}).Debug("tmux出力キャプチャに失敗（セッションが存在しない可能性）")
+
+		// キャプチャエラーの詳細をAPIに送信
+		if len(output) > 0 {
+			logMessage := fmt.Sprintf("[tmux:%s:capture-error] %s", sessionName, strings.TrimSpace(string(output)))
+			if sendErr := apiClient.SendLog(taskID, "DEBUG", logMessage); sendErr != nil {
+				logger.WithError(sendErr).Debug("キャプチャエラーログ送信に失敗しました")
+			}
+		}
+
 		return nil // セッション出力キャプチャの失敗は致命的エラーにしない
 	}
+
+	// capture-paneコマンドの実行ログ
+	logger.WithFields(logrus.Fields{
+		"session":    sessionName,
+		"bytes_read": len(output),
+	}).Debug("✅ tmux capture-paneが正常に実行されました")
 
 	// 出力が空でない場合のみログ送信
 	outputStr := strings.TrimSpace(string(output))
@@ -179,20 +233,54 @@ func captureTmuxOutput(apiClient *api.Client, taskID, sessionName string, logger
 // killTmuxSession はtmuxセッションを終了します
 func killTmuxSession(sessionName string, logger *logrus.Entry) error {
 	cmd := exec.Command("tmux", "kill-session", "-t", sessionName)
-	if err := cmd.Run(); err != nil {
+
+	logger.WithFields(logrus.Fields{
+		"session": sessionName,
+		"command": strings.Join(cmd.Args, " "),
+	}).Info("💀 tmuxセッションを終了します")
+
+	// kill-sessionコマンドの出力をキャプチャ
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logger.WithError(err).WithFields(logrus.Fields{
+			"session": sessionName,
+			"output":  string(output),
+		}).Error("❌ tmuxセッション終了に失敗")
+
+		if len(output) > 0 {
+			return fmt.Errorf("tmuxセッション終了に失敗 (出力: %s): %w", strings.TrimSpace(string(output)), err)
+		}
 		return fmt.Errorf("tmuxセッション終了に失敗: %w", err)
 	}
 
-	logger.WithField("session", sessionName).Info("tmuxセッションを終了しました")
+	// 終了コマンドの出力をログ表示
+	if len(output) > 0 {
+		logger.WithFields(logrus.Fields{
+			"session": sessionName,
+			"output":  strings.TrimSpace(string(output)),
+		}).Info("📋 tmux終了コマンドの出力")
+	} else {
+		logger.WithField("session", sessionName).Info("✅ tmuxセッションが正常に終了しました")
+	}
+
 	return nil
 }
 
 // getTmuxSessionStatus は既存のtmuxセッションの状態を確認します
 func getTmuxSessionStatus(sessionName string) (string, error) {
 	cmd := exec.Command("tmux", "has-session", "-t", sessionName)
-	if err := cmd.Run(); err != nil {
+
+	// has-sessionコマンドの出力をキャプチャ
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		// セッションが存在しない場合の詳細出力
+		if len(output) > 0 {
+			return "", fmt.Errorf("tmuxセッションが存在しません (出力: %s): %w", strings.TrimSpace(string(output)), err)
+		}
 		return "", fmt.Errorf("tmuxセッションが存在しません: %w", err)
 	}
+
+	// セッション存在確認成功（通常は出力なし）
 	return sessionName, nil
 }
 
