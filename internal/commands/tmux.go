@@ -27,15 +27,32 @@ func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID st
 	}
 
 	// 既存のtmuxセッションをチェック
-	if _, err := getTmuxSessionStatus(tmuxSessionName); err == nil {
+	taskLogger.WithFields(logrus.Fields{
+		"session_name": tmuxSessionName,
+		"session_id":   daemonSessionID,
+	}).Debug("🔍 既存のtmuxセッションをチェックしています...")
+
+	_, sessionErr := getTmuxSessionStatus(tmuxSessionName)
+	if sessionErr == nil {
 		taskLogger.WithFields(logrus.Fields{
 			"existing_session": tmuxSessionName,
 			"session_id":       daemonSessionID,
-		}).Info("既存のtmuxセッションを再利用します")
+		}).Info("✅ 既存のtmuxセッションが見つかりました。再利用します")
+
+		// セッション再利用をAPIにログ送信
+		logMessage := fmt.Sprintf("[tmux:%s:reuse] 既存のtmuxセッションを再利用します", tmuxSessionName)
+		if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
+			taskLogger.WithError(sendErr).Warning("セッション再利用ログの送信に失敗しました")
+		}
 
 		// 既存セッションでClaude実行
 		return executeTmuxCommandInSession(ctx, apiClient, taskID, taskContent, tmuxSessionName, taskLogger)
 	}
+
+	taskLogger.WithFields(logrus.Fields{
+		"session_name": tmuxSessionName,
+		"error":        sessionErr.Error(),
+	}).Debug("❌ 既存のtmuxセッションが見つかりませんでした。新規作成します")
 
 	// ~/keruta ディレクトリの存在を確認・作成
 	kerutaDir := os.ExpandEnv("$HOME/keruta")
@@ -89,14 +106,40 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 	// コマンドの標準出力・標準エラーをキャプチャ
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		outputStr := strings.TrimSpace(string(output))
+
+		// セッション名の競合をチェック
+		if strings.Contains(outputStr, "duplicate session") || strings.Contains(outputStr, "session already exists") {
+			logger.WithFields(logrus.Fields{
+				"session": sessionName,
+				"output":  outputStr,
+			}).Warning("⚠️ tmuxセッション名が競合しています。既存セッションを確認して再利用を試行します")
+
+			// 既存セッションが見つかった場合は再利用
+			if _, statusErr := getTmuxSessionStatus(sessionName); statusErr == nil {
+				logger.WithField("session", sessionName).Info("🔄 セッション競合が発生しましたが、既存セッションを再利用します")
+
+				// セッション競合による再利用をAPIにログ送信
+				logMessage := fmt.Sprintf("[tmux:%s:conflict-reuse] セッション競合により既存セッションを再利用します", sessionName)
+				if sendErr := apiClient.SendLog(taskID, "WARNING", logMessage); sendErr != nil {
+					logger.WithError(sendErr).Warning("セッション競合ログの送信に失敗しました")
+				}
+
+				// 競合が発生した場合は、tmuxセッション作成を中止して正常終了
+				// （既存セッションが利用可能であることを示す）
+				logger.WithField("session", sessionName).Info("🎯 セッション競合により新規作成を中止し、正常終了します")
+				return nil
+			}
+		}
+
 		logger.WithError(err).WithFields(logrus.Fields{
 			"session": sessionName,
-			"output":  string(output),
+			"output":  outputStr,
 		}).Error("❌ tmuxセッション開始に失敗")
 
 		// APIにもエラー出力を送信
 		if len(output) > 0 {
-			logMessage := fmt.Sprintf("[tmux:%s:start-cmd] %s", sessionName, strings.TrimSpace(string(output)))
+			logMessage := fmt.Sprintf("[tmux:%s:start-cmd] %s", sessionName, outputStr)
 			if sendErr := apiClient.SendLog(taskID, "ERROR", logMessage); sendErr != nil {
 				logger.WithError(sendErr).Warning("tmux開始エラーログ送信に失敗しました")
 			}
