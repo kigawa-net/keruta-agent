@@ -102,7 +102,10 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 		"session": sessionName,
 		"command": strings.Join(cmd.Args, " "),
 	}).Info("⚡ tmuxセッションを開始します")
-
+	err := cmd.Run()
+	if err != nil {
+		return err
+	}
 	// コマンドの標準出力・標準エラーをキャプチャ
 	output, err := cmd.CombinedOutput()
 	if err != nil {
