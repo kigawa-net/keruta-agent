@@ -72,7 +72,7 @@ func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID st
 	// tmuxコマンドを構築 - セッション作成、ディレクトリ移動、Claude実行
 	tmuxCmd := exec.CommandContext(ctx, "tmux",
 		"new-session", "-d", "-s", tmuxSessionName,
-		"-c", kerutaDir,
+		"-c", kerutaDir, ">", "~/tmux.log",
 		claudeCmd)
 
 	taskLogger.WithFields(logrus.Fields{
@@ -102,10 +102,6 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 		"session": sessionName,
 		"command": strings.Join(cmd.Args, " "),
 	}).Info("⚡ tmuxセッションを開始します")
-	err := cmd.Run()
-	if err != nil {
-		return err
-	}
 	// コマンドの標準出力・標準エラーをキャプチャ
 	output, err := cmd.CombinedOutput()
 	if err != nil {
