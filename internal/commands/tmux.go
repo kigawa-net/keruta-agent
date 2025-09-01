@@ -66,19 +66,13 @@ func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID st
 		"task_content": taskContent,
 	}).Info("tmuxセッションでClaude実行を開始します")
 
-	// Claude実行コマンドを構築
-	claudeCmd := fmt.Sprintf(`claude -p "%s" --dangerously-skip-permissions`, strings.ReplaceAll(taskContent, `"`, `\"`))
-
 	// tmuxコマンドを構築 - セッション作成、ディレクトリ移動、Claude実行
-	tmuxCmd := exec.CommandContext(ctx, "tmux",
-		"new-session", "-s", tmuxSessionName,
-		"-c", kerutaDir,
-		claudeCmd)
+	tmuxCmd := exec.CommandContext(ctx, "claude", "-p", "--dangerously-skip-permissions", strings.ReplaceAll(taskContent, `"`, `\"`))
 
 	taskLogger.WithFields(logrus.Fields{
 		"tmux_session": tmuxSessionName,
 		"working_dir":  kerutaDir,
-		"command":      claudeCmd,
+		"command":      tmuxCmd.Args,
 	}).Info("🖥️ tmuxコマンドを構築しました")
 
 	// コマンド実行とログ収集
