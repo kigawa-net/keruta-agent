@@ -178,11 +178,27 @@ func pollAndExecuteSessionTasks(ctx context.Context, apiClient *api.Client, logg
 			return nil
 		}
 
+		// まず古いIN_PROGRESSタスクをチェックしてリトライ対象にする
+		if err := checkAndRetryStuckTasks(apiClient, daemonSessionID, logger); err != nil {
+			logger.WithError(err).Warn("古いIN_PROGRESSタスクのチェックに失敗しました")
+		}
+
+		// RETRYINGタスクを取得
+		retryingTasks, err := apiClient.GetRetryingTasksForSession(daemonSessionID)
+		if err != nil {
+			return fmt.Errorf("retrying task retrieval failed: %w", err)
+		}
+
 		// セッション用のPENDINGタスクを取得
-		tasks, err := apiClient.GetPendingTasksForSession(daemonSessionID)
+		pendingTasks, err := apiClient.GetPendingTasksForSession(daemonSessionID)
 		if err != nil {
 			return fmt.Errorf("session task retrieval failed: %w", err)
 		}
+
+		// RETRYINGタスクとPENDINGタスクを結合（RETRYINGを優先）
+		var tasks []*api.Task
+		tasks = append(tasks, retryingTasks...)
+		tasks = append(tasks, pendingTasks...)
 
 		if len(tasks) == 0 {
 			logger.Debug("新しいタスクはありません")
@@ -190,9 +206,11 @@ func pollAndExecuteSessionTasks(ctx context.Context, apiClient *api.Client, logg
 		}
 
 		logger.WithFields(logrus.Fields{
-			"task_count": len(tasks),
-			"session_id": daemonSessionID,
-		}).Info("📋 セッションから新しいタスクを受信しました")
+			"pending_count":  len(pendingTasks),
+			"retrying_count": len(retryingTasks),
+			"total_count":    len(tasks),
+			"session_id":     daemonSessionID,
+		}).Info("📋 セッションからタスクを受信しました")
 
 		// 各タスクを順次実行（並列実行なし）
 		for _, task := range tasks {
@@ -243,7 +261,13 @@ func pollAndExecuteSessionTasks(ctx context.Context, apiClient *api.Client, logg
 // executeTask は個別のタスクを実行します
 func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, parentLogger *logrus.Entry) error {
 	taskLogger := parentLogger.WithField("task_id", task.ID)
-	taskLogger.Info("🔄 タスクを実行しています...")
+
+	// タスクの状態に応じたログメッセージ
+	if task.Status == "RETRYING" {
+		taskLogger.Info("🔄 リトライタスクを実行しています...")
+	} else {
+		taskLogger.Info("🔄 タスクを実行しています...")
+	}
 
 	// 環境変数にタスクIDを設定
 	oldTaskID := os.Getenv("KERUTA_TASK_ID")
@@ -371,4 +395,70 @@ func init() {
 			daemonPollInterval = daemonInterval
 		}
 	}
+}
+
+// checkAndRetryStuckTasks は古いIN_PROGRESSタスクをチェックしてリトライ状態に変更します
+func checkAndRetryStuckTasks(apiClient *api.Client, sessionID string, logger *logrus.Entry) error {
+	// IN_PROGRESSタスクを取得
+	inProgressTasks, err := apiClient.GetInProgressTasksForSession(sessionID)
+	if err != nil {
+		return fmt.Errorf("IN_PROGRESSタスクの取得に失敗: %w", err)
+	}
+
+	if len(inProgressTasks) == 0 {
+		return nil
+	}
+
+	now := time.Now()
+	taskTimeout := 10 * time.Minute // タスクタイムアウト時間（設定可能にする）
+
+	for _, task := range inProgressTasks {
+		// タスクの更新時刻をチェック（APIからの情報に依存）
+		var updatedAt time.Time
+		var taskAge time.Duration
+
+		// UpdatedAtフィールドを解析
+		if task.UpdatedAt != nil {
+			switch v := task.UpdatedAt.(type) {
+			case string:
+				if t, err := time.Parse(time.RFC3339, v); err == nil {
+					updatedAt = t
+					taskAge = now.Sub(updatedAt)
+				} else {
+					// 解析できない場合は大きな値を設定してタイムアウト対象にする
+					taskAge = taskTimeout + 1*time.Minute
+				}
+			case float64:
+				// Unixタイムスタンプの場合
+				updatedAt = time.Unix(int64(v), 0)
+				taskAge = now.Sub(updatedAt)
+			default:
+				// その他の場合はタイムアウト対象にする
+				taskAge = taskTimeout + 1*time.Minute
+			}
+		} else {
+			// UpdatedAtがnilの場合はタイムアウト対象にする
+			taskAge = taskTimeout + 1*time.Minute
+		}
+
+		if taskAge > taskTimeout {
+			logger.WithFields(logrus.Fields{
+				"task_id":   task.ID,
+				"task_name": task.Name,
+				"age":       taskAge.String(),
+				"timeout":   taskTimeout.String(),
+			}).Info("🔄 古いIN_PROGRESSタスクをリトライ状態に変更します")
+
+			// タスクをRETRYING状態に変更
+			retryMessage := fmt.Sprintf("タスクが%s間IN_PROGRESSで停止していたためリトライします", taskAge.String())
+			if err := apiClient.RetryTask(task.ID, retryMessage); err != nil {
+				logger.WithError(err).WithField("task_id", task.ID).Error("タスクのリトライ状態への変更に失敗しました")
+				continue
+			}
+
+			logger.WithField("task_id", task.ID).Info("✅ タスクをリトライ状態に変更しました")
+		}
+	}
+
+	return nil
 }

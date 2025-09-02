@@ -298,26 +298,26 @@ func (c *Client) GetScript(taskID string) (*Script, error) {
 
 // Session はセッション情報を表します
 type Session struct {
-	ID             string                  `json:"id"`
-	Name           string                  `json:"name"`
-	Description    string                  `json:"description"`
-	Status         string                  `json:"status"`
-	WorkspaceID    string                  `json:"workspaceId"`
-	Tags           []string                `json:"tags"`
-	RepositoryURL  string                  `json:"repositoryUrl"`
-	RepositoryRef  string                  `json:"repositoryRef"`
-	Metadata       map[string]string       `json:"metadata"`
-	TemplateConfig *SessionTemplateConfig  `json:"templateConfig"`
-	CreatedAt      interface{}             `json:"createdAt"`
-	UpdatedAt      interface{}             `json:"updatedAt"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Description    string                 `json:"description"`
+	Status         string                 `json:"status"`
+	WorkspaceID    string                 `json:"workspaceId"`
+	Tags           []string               `json:"tags"`
+	RepositoryURL  string                 `json:"repositoryUrl"`
+	RepositoryRef  string                 `json:"repositoryRef"`
+	Metadata       map[string]string      `json:"metadata"`
+	TemplateConfig *SessionTemplateConfig `json:"templateConfig"`
+	CreatedAt      interface{}            `json:"createdAt"`
+	UpdatedAt      interface{}            `json:"updatedAt"`
 }
 
 type SessionTemplateConfig struct {
-	TemplateID         string            `json:"templateId"`
-	TemplateName       string            `json:"templateName"`
-	TemplatePath       string            `json:"templatePath"`
-	PreferredKeywords  []string          `json:"preferredKeywords"`
-	Parameters         map[string]string `json:"parameters"`
+	TemplateID        string            `json:"templateId"`
+	TemplateName      string            `json:"templateName"`
+	TemplatePath      string            `json:"templatePath"`
+	PreferredKeywords []string          `json:"preferredKeywords"`
+	Parameters        map[string]string `json:"parameters"`
 }
 
 // GetSession はセッション情報を取得します
@@ -361,6 +361,53 @@ func (c *Client) GetSession(sessionID string) (*Session, error) {
 func (c *Client) GetPendingTasksForSession(sessionID string) ([]*Task, error) {
 	url := fmt.Sprintf("%s/api/v1/sessions/%s/tasks?status=PENDING", c.baseURL, sessionID)
 
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("リクエストの作成に失敗: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API呼び出しに失敗: %w", err)
+	}
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			logger.WithTaskIDAndComponent("api").WithError(closeErr).Warning("レスポンスボディのクローズに失敗しました")
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API呼び出しが失敗しました: %d - %s", resp.StatusCode, string(body))
+	}
+
+	var tasks []*Task
+	if err := json.NewDecoder(resp.Body).Decode(&tasks); err != nil {
+		return nil, fmt.Errorf("レスポンスのデコードに失敗: %w", err)
+	}
+
+	return tasks, nil
+}
+
+// GetInProgressTasksForSession は指定されたセッションのIN_PROGRESSタスクを取得します
+func (c *Client) GetInProgressTasksForSession(sessionID string) ([]*Task, error) {
+	url := fmt.Sprintf("%s/api/v1/sessions/%s/tasks?status=IN_PROGRESS", c.baseURL, sessionID)
+	return c.getTasksFromURL(url)
+}
+
+// GetRetryingTasksForSession は指定されたセッションのRETRYINGタスクを取得します
+func (c *Client) GetRetryingTasksForSession(sessionID string) ([]*Task, error) {
+	url := fmt.Sprintf("%s/api/v1/sessions/%s/tasks?status=RETRYING", c.baseURL, sessionID)
+	return c.getTasksFromURL(url)
+}
+
+// getTasksFromURL はURLからタスクリストを取得する共通メソッドです
+func (c *Client) getTasksFromURL(url string) ([]*Task, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("リクエストの作成に失敗: %w", err)
@@ -444,6 +491,11 @@ func (c *Client) SuccessTask(taskID string, message string) error {
 // FailTask はタスクを失敗として完了します
 func (c *Client) FailTask(taskID string, message string, errorCode string) error {
 	return c.UpdateTaskStatus(taskID, TaskStatusFailed, message, 0, errorCode)
+}
+
+// RetryTask はタスクをリトライ状態に変更します
+func (c *Client) RetryTask(taskID string, message string) error {
+	return updateTaskStatusHTTP(c, taskID, "RETRYING", message, 0, "TASK_RETRY")
 }
 
 // GetTaskScript はタスクのスクリプトを取得します
