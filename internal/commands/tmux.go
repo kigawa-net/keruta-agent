@@ -1,11 +1,14 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"keruta-agent/internal/api"
@@ -45,8 +48,8 @@ func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID st
 			taskLogger.WithError(sendErr).Warning("セッション再利用ログの送信に失敗しました")
 		}
 
-		// 既存セッションでClaude実行
-		return executeTmuxCommandInSession(ctx, apiClient, taskID, taskContent, tmuxSessionName, taskLogger)
+		// 既存セッションでClaude実行 + ストリーミング
+		return executeTmuxCommandInSessionWithStreaming(ctx, apiClient, taskID, taskContent, tmuxSessionName, taskLogger)
 	}
 
 	taskLogger.WithFields(logrus.Fields{
@@ -100,8 +103,9 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 		"session": sessionName,
 		"command": strings.Join(cmd.Args, " "),
 	}).Info("⚡ tmuxセッションを開始します")
-	// コマンドの標準出力・標準エラーをキャプチャ
-	output, err := cmd.CombinedOutput()
+
+	// リアルタイムストリーミング処理でコマンドを実行
+	output, err := executeCommandWithStreaming(ctx, cmd, apiClient, taskID, logger)
 	if err != nil {
 		outputStr := strings.TrimSpace(string(output))
 
@@ -189,6 +193,20 @@ func executeTmuxCommand(ctx context.Context, cmd *exec.Cmd, apiClient *api.Clien
 	// tmuxは detached モードで実行されているため、完了を待つ必要はない
 	logger.WithField("session", sessionName).Info("🔄 tmuxセッションはバックグラウンドで実行中です")
 
+	// ストリーミング出力監視を開始（バックグラウンド）
+	streamCtx, cancelStream := context.WithTimeout(ctx, 5*time.Minute) // 最大5分間ストリーミング
+	go func() {
+		defer cancelStream()
+		if err := streamTmuxOutput(streamCtx, apiClient, taskID, sessionName, logger); err != nil {
+			if err != context.Canceled && err != context.DeadlineExceeded {
+				logger.WithError(err).Warning("新規セッションのストリーミング処理でエラーが発生しました")
+			}
+		}
+	}()
+
+	// 少し待機してからストリーミングを開始
+	time.Sleep(1 * time.Second)
+
 	// 最終的な出力をキャプチャ
 	if err := captureTmuxOutput(apiClient, taskID, sessionName, logger); err != nil {
 		logger.WithError(err).Warning("最終出力キャプチャに失敗しました")
@@ -268,6 +286,187 @@ func captureTmuxOutput(apiClient *api.Client, taskID, sessionName string, logger
 	}
 
 	return nil
+}
+
+// executeCommandWithStreaming はコマンドをリアルタイムストリーミングで実行します
+func executeCommandWithStreaming(ctx context.Context, cmd *exec.Cmd, apiClient *api.Client, taskID string, logger *logrus.Entry) ([]byte, error) {
+	logger.Debug("📡 コマンドのリアルタイムストリーミング実行を開始")
+
+	// 標準出力と標準エラーのパイプを作成
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("標準出力パイプの作成に失敗: %w", err)
+	}
+
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, fmt.Errorf("標準エラーパイプの作成に失敗: %w", err)
+	}
+
+	// 出力を蓄積するバッファ
+	var outputBuffer []byte
+	var outputMutex sync.Mutex
+
+	// コマンドを開始
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("コマンドの開始に失敗: %w", err)
+	}
+
+	// WaitGroupで並行処理の完了を待機
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// 標準出力をストリーミング
+	go func() {
+		defer wg.Done()
+		streamOutput(ctx, stdout, "stdout", apiClient, taskID, logger, &outputBuffer, &outputMutex)
+	}()
+
+	// 標準エラーをストリーミング
+	go func() {
+		defer wg.Done()
+		streamOutput(ctx, stderr, "stderr", apiClient, taskID, logger, &outputBuffer, &outputMutex)
+	}()
+
+	// コマンドの完了を待機
+	cmdErr := cmd.Wait()
+
+	// ストリーミングの完了を待機
+	wg.Wait()
+
+	// 最終的な出力を返す
+	outputMutex.Lock()
+	finalOutput := make([]byte, len(outputBuffer))
+	copy(finalOutput, outputBuffer)
+	outputMutex.Unlock()
+
+	return finalOutput, cmdErr
+}
+
+// streamOutput は指定されたReaderからの出力をリアルタイムでストリーミングします
+func streamOutput(ctx context.Context, reader io.Reader, streamType string, apiClient *api.Client, taskID string, logger *logrus.Entry, outputBuffer *[]byte, outputMutex *sync.Mutex) {
+	scanner := bufio.NewScanner(reader)
+
+	for scanner.Scan() {
+		select {
+		case <-ctx.Done():
+			logger.Debug("コンテキストキャンセルによりストリーミングを停止")
+			return
+		default:
+			line := scanner.Text()
+
+			// 出力バッファに追加
+			outputMutex.Lock()
+			*outputBuffer = append(*outputBuffer, []byte(line+"\n")...)
+			outputMutex.Unlock()
+
+			// 空行はスキップ
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+
+			// ログメッセージを作成
+			logMessage := fmt.Sprintf("[claude:%s] %s", streamType, line)
+			logger.Info(logMessage)
+
+			// APIにリアルタイムでログを送信
+			if err := apiClient.SendLog(taskID, "INFO", logMessage); err != nil {
+				logger.WithError(err).Warning("リアルタイムログ送信に失敗しました")
+			}
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		logger.WithError(err).WithField("stream_type", streamType).Warning("ストリーム読み取りでエラーが発生しました")
+	}
+}
+
+// executeTmuxCommandInSessionWithStreaming は既存のtmuxセッション内でコマンドを実行し、リアルタイムストリーミングも行います
+func executeTmuxCommandInSessionWithStreaming(ctx context.Context, apiClient *api.Client, taskID, taskContent, sessionName string, logger *logrus.Entry) error {
+	logger.WithField("session", sessionName).Info("🔄 既存のtmuxセッション内でClaude実行タスク（ストリーミング付き）を実行します")
+
+	// ストリーミング用のコンテキスト
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	defer cancelStream()
+
+	// ストリーミングをバックグラウンドで開始
+	go func() {
+		if err := streamTmuxOutput(streamCtx, apiClient, taskID, sessionName, logger); err != nil {
+			if err != context.Canceled {
+				logger.WithError(err).Warning("ストリーミング処理でエラーが発生しました")
+			}
+		}
+	}()
+
+	// 既存の処理を実行
+	err := executeTmuxCommandInSession(ctx, apiClient, taskID, taskContent, sessionName, logger)
+
+	// ストリーミング停止前に少し待機してタスク完了ログを取得
+	time.Sleep(3 * time.Second)
+	cancelStream()
+
+	return err
+}
+
+// streamTmuxOutput はtmuxセッションの出力をリアルタイムでストリーミング処理します
+func streamTmuxOutput(ctx context.Context, apiClient *api.Client, taskID, sessionName string, logger *logrus.Entry) error {
+	logger.WithField("session", sessionName).Info("🔄 tmuxセッション出力ストリーミングを開始")
+
+	// まずtmuxセッションが存在するかチェック
+	if _, err := getTmuxSessionStatus(sessionName); err != nil {
+		logger.WithError(err).WithField("session", sessionName).Debug("tmuxセッションが存在しないためストリーミングをスキップ")
+		return nil
+	}
+
+	var lastLineCount int
+	ticker := time.NewTicker(1 * time.Second) // 1秒間隔でポーリング（よりリアルタイム）
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			logger.WithField("session", sessionName).Info("✋ コンテキストキャンセルによりストリーミングを停止")
+			return ctx.Err()
+		case <-ticker.C:
+			// tmux出力を取得
+			cmd := exec.Command("tmux", "capture-pane", "-t", sessionName, "-p", "-S", "-3000")
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				// セッションが終了している可能性
+				if _, sessionErr := getTmuxSessionStatus(sessionName); sessionErr != nil {
+					logger.WithField("session", sessionName).Info("✅ tmuxセッションが終了しているためストリーミングを停止")
+					return nil
+				}
+				logger.WithError(err).Debug("tmux capture-paneでエラーが発生しましたが継続します")
+				continue
+			}
+
+			outputStr := strings.TrimSpace(string(output))
+			if outputStr == "" {
+				continue
+			}
+
+			lines := strings.Split(outputStr, "\n")
+			currentLineCount := len(lines)
+
+			// 新しい行のみを処理
+			if currentLineCount > lastLineCount {
+				newLines := lines[lastLineCount:]
+				for _, line := range newLines {
+					if strings.TrimSpace(line) != "" {
+						logMessage := fmt.Sprintf("[tmux:%s:stream] %s", sessionName, line)
+						logger.Info(logMessage)
+
+						// APIにログを送信
+						if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
+							logger.WithError(sendErr).Warning("ストリーミングログ送信に失敗しました")
+						}
+					}
+				}
+				lastLineCount = currentLineCount
+			}
+		}
+	}
 }
 
 // killTmuxSession はtmuxセッションを終了します
