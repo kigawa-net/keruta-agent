@@ -65,7 +65,9 @@ func executeTmuxClaudeTask(ctx context.Context, apiClient *api.Client, taskID st
 		"working_dir":  kerutaDir,
 		"task_content": taskContent,
 	}).Info("tmuxセッションでClaude実行を開始します")
-
+	if taskContent == "" {
+		taskContent = "none"
+	}
 	// tmuxコマンドを構築 - セッション作成、ディレクトリ移動、Claude実行
 	tmuxCmd := exec.CommandContext(ctx, "claude", "--dangerously-skip-permissions")
 	tmuxCmd.Stdin = strings.NewReader(taskContent)

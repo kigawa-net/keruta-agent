@@ -279,7 +279,11 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 	taskLogger.Info("=" + strings.Repeat("=", 50))
 
 	// スクリプトの実行 - 常にclaudeコマンドを使用
-	if err := executeTmuxClaudeTask(ctx, apiClient, task.ID, script, taskLogger); err != nil {
+	if err := executeTmuxClaudeTask(ctx, apiClient, task.ID,
+		"# "+task.Name+"\n"+
+			"## description\n"+
+			""+task.Description,
+		taskLogger); err != nil {
 		if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("Claude タスクの実行に失敗しました: %v", err), "CLAUDE_EXECUTION_ERROR"); failErr != nil {
 			taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
 		}
