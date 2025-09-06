@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -278,11 +279,14 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 	}
 	taskLogger.Info("=" + strings.Repeat("=", 50))
 
+	reader, writer := io.Pipe()
+	err = writeStdIn(writer, task, apiClient)
+	if err != nil {
+		return err
+	}
 	// スクリプトの実行 - 常にclaudeコマンドを使用
-	if err := executeTmuxClaudeTask(ctx, apiClient, task.ID,
-		"# "+task.Name+"\n"+
-			"## description\n"+
-			""+task.Description,
+	if err := executeClaudeTask(ctx, apiClient, task.ID,
+		reader,
 		taskLogger); err != nil {
 		if failErr := apiClient.FailTask(task.ID, fmt.Sprintf("Claude タスクの実行に失敗しました: %v", err), "CLAUDE_EXECUTION_ERROR"); failErr != nil {
 			taskLogger.WithError(failErr).Error("タスク失敗の通知に失敗しました")
@@ -301,6 +305,46 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 	}
 
 	taskLogger.Info("✅ タスクが正常に完了しました")
+	return nil
+}
+func writeStdIn(writer *io.PipeWriter, task *api.Task, apiClient *api.Client) error {
+	content := "# " + task.Name + "\n" +
+		"## description\n" +
+		"" + task.Description
+
+	_, err := writer.Write([]byte(content))
+	if err != nil {
+		return err
+	}
+	// 親タスクの情報がある場合は追加
+	for task.ParentTaskID != nil && *task.ParentTaskID != "" {
+		var err error
+		prev := task
+		task, err = apiClient.GetTask(*prev.ParentTaskID)
+		if err != nil {
+			// 親タスクの取得に失敗した場合はログに記録するが、処理は継続
+			content = "\n\n## parent task\n" +
+				"Parent Task ID: " + *prev.ParentTaskID + "\n" +
+				"(親タスクの詳細取得に失敗: " + err.Error() + ")"
+
+			_, err := writer.Write([]byte(content))
+			if err != nil {
+				return err
+			}
+			break
+		} else {
+			content = "\n\n## parent task\n" +
+				"Parent Task: " + task.Name + "\n" +
+				"Parent Status: " + string(task.Status) + "\n" +
+				"Parent Description: " + task.Description
+
+			_, err := writer.Write([]byte(content))
+			if err != nil {
+				return err
+			}
+		}
+	}
+
 	return nil
 }
 

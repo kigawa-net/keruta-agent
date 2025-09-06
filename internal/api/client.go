@@ -126,18 +126,19 @@ type ScriptResponse struct {
 
 // Task はタスク情報を表します
 type Task struct {
-	ID          string                 `json:"id"`
-	SessionID   string                 `json:"sessionId"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Script      string                 `json:"script"`
-	Status      TaskStatus             `json:"status"`
-	Message     string                 `json:"message"`
-	Progress    int                    `json:"progress"`
-	ErrorCode   string                 `json:"errorCode"`
-	Parameters  map[string]interface{} `json:"parameters"`
-	CreatedAt   interface{}            `json:"createdAt,omitempty"`
-	UpdatedAt   interface{}            `json:"updatedAt,omitempty"`
+	ID           string                 `json:"id"`
+	SessionID    string                 `json:"sessionId"`
+	ParentTaskID *string                `json:"parentTaskId,omitempty"`
+	Name         string                 `json:"name"`
+	Description  string                 `json:"description"`
+	Script       string                 `json:"script"`
+	Status       TaskStatus             `json:"status"`
+	Message      string                 `json:"message"`
+	Progress     int                    `json:"progress"`
+	ErrorCode    string                 `json:"errorCode"`
+	Parameters   map[string]interface{} `json:"parameters"`
+	CreatedAt    interface{}            `json:"createdAt,omitempty"`
+	UpdatedAt    interface{}            `json:"updatedAt,omitempty"`
 }
 
 // NewClient は新しいAPIクライアントを作成します
@@ -298,26 +299,26 @@ func (c *Client) GetScript(taskID string) (*Script, error) {
 
 // Session はセッション情報を表します
 type Session struct {
-	ID             string                  `json:"id"`
-	Name           string                  `json:"name"`
-	Description    string                  `json:"description"`
-	Status         string                  `json:"status"`
-	WorkspaceID    string                  `json:"workspaceId"`
-	Tags           []string                `json:"tags"`
-	RepositoryURL  string                  `json:"repositoryUrl"`
-	RepositoryRef  string                  `json:"repositoryRef"`
-	Metadata       map[string]string       `json:"metadata"`
-	TemplateConfig *SessionTemplateConfig  `json:"templateConfig"`
-	CreatedAt      interface{}             `json:"createdAt"`
-	UpdatedAt      interface{}             `json:"updatedAt"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Description    string                 `json:"description"`
+	Status         string                 `json:"status"`
+	WorkspaceID    string                 `json:"workspaceId"`
+	Tags           []string               `json:"tags"`
+	RepositoryURL  string                 `json:"repositoryUrl"`
+	RepositoryRef  string                 `json:"repositoryRef"`
+	Metadata       map[string]string      `json:"metadata"`
+	TemplateConfig *SessionTemplateConfig `json:"templateConfig"`
+	CreatedAt      interface{}            `json:"createdAt"`
+	UpdatedAt      interface{}            `json:"updatedAt"`
 }
 
 type SessionTemplateConfig struct {
-	TemplateID         string            `json:"templateId"`
-	TemplateName       string            `json:"templateName"`
-	TemplatePath       string            `json:"templatePath"`
-	PreferredKeywords  []string          `json:"preferredKeywords"`
-	Parameters         map[string]string `json:"parameters"`
+	TemplateID        string            `json:"templateId"`
+	TemplateName      string            `json:"templateName"`
+	TemplatePath      string            `json:"templatePath"`
+	PreferredKeywords []string          `json:"preferredKeywords"`
+	Parameters        map[string]string `json:"parameters"`
 }
 
 // GetSession はセッション情報を取得します
@@ -453,6 +454,37 @@ func (c *Client) GetTaskScript(taskID string) (string, error) {
 		return "", err
 	}
 	return script.Content, nil
+}
+
+// GetTask はタスクの詳細情報を取得します
+func (c *Client) GetTask(taskID string) (*Task, error) {
+	url := fmt.Sprintf("%s/api/v1/tasks/%s", c.baseURL, taskID)
+
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("タスク取得リクエストの作成に失敗: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("タスク取得リクエストに失敗: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("タスク取得に失敗: %s", resp.Status)
+	}
+
+	var task Task
+	if err := json.NewDecoder(resp.Body).Decode(&task); err != nil {
+		return nil, fmt.Errorf("タスクレスポンスのパースに失敗: %w", err)
+	}
+
+	return &task, nil
 }
 
 // SearchSessionByPartialID は部分的なセッションIDで検索し、完全なUUIDを取得します

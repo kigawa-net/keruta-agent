@@ -140,7 +140,7 @@ func TestExecuteTmuxCommandInSessionLogic(t *testing.T) {
 	// テスト用のロガー
 	logger := logrus.NewEntry(logrus.New())
 
-	// executeTmuxCommandInSession の引数をテスト
+	// executeCommandInSession の引数をテスト
 	ctx := context.Background()
 	taskID := "test-task-12345"
 	taskContent := "test claude task"
