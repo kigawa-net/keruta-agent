@@ -61,7 +61,7 @@ func executeCommand(cmd *exec.Cmd, apiClient *api.Client, taskID string, logger 
 
 		// APIにもエラー出力を送信
 		if len(output) > 0 {
-			logMessage := fmt.Sprintf("[:%s:start-cmd] %s", outputStr)
+			logMessage := fmt.Sprintf("[:start-cmd] %s", outputStr)
 			if sendErr := apiClient.SendLog(taskID, "ERROR", logMessage); sendErr != nil {
 				logger.WithError(sendErr).Warning("開始エラーログ送信に失敗しました")
 			}
@@ -76,16 +76,16 @@ func executeCommand(cmd *exec.Cmd, apiClient *api.Client, taskID string, logger 
 		}).Info("📋 ")
 
 		// APIにもログ送信
-		logMessage := fmt.Sprintf("[:%s:start-cmd] %s", strings.TrimSpace(string(output)))
+		logMessage := fmt.Sprintf("[:start-cmd] %s", strings.TrimSpace(string(output)))
 		if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
-			logger.WithError(sendErr).Warning("")
+			logger.WithError(sendErr).Warning("ログ送信に失敗しました")
 		}
 	} else {
 
 		// セッション開始成功をAPIにログ送信
-		logMessage := fmt.Sprintf("[:%s:start-cmd] ")
+		logMessage := "[:start-cmd] コマンド実行完了"
 		if sendErr := apiClient.SendLog(taskID, "INFO", logMessage); sendErr != nil {
-			logger.WithError(sendErr).Warning("")
+			logger.WithError(sendErr).Warning("ログ送信に失敗しました")
 		}
 	}
 	logger.Info("✅ Claude実行タスクが完了しました")
