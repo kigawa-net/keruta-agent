@@ -1,0 +1,22 @@
+# OpenAPI client generation config for Go
+package: client
+generate:
+  client: true
+  models: true
+  embedded-spec: false
+  chi-server: false
+  gin: false
+  fiber: false
+  gorilla: false
+  strict-server: false
+  echo: false
+
+output-options:
+  skip-prune: true
+  user-templates:
+  exclude-schemas: []
+  include-tags: []
+  exclude-tags: []
+
+compatibility:
+  old-config-style: false
