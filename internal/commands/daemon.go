@@ -322,12 +322,47 @@ func writeStdIn(writer *io.PipeWriter, task *api.Task, apiClient *api.Client) er
 	if err != nil {
 		return err
 	}
-	// 親タスクの情報がある場合は追加
-	for task.ParentTaskID != nil && *task.ParentTaskID != "" {
+	// 親タスクの情報がある場合は追加（最大5階層まで、各API呼び出しに15秒タイムアウト）
+	maxDepth := 5
+	depth := 0
+	for task.ParentTaskID != nil && *task.ParentTaskID != "" && depth < maxDepth {
 		var err error
 		prev := task
-		task, err = apiClient.GetTask(*prev.ParentTaskID)
-		if err != nil {
+		
+		// タイムアウト付きで親タスクを取得
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		
+		taskChan := make(chan *api.Task, 1)
+		errChan := make(chan error, 1)
+		
+		go func() {
+			parentTask, getErr := apiClient.GetTask(*prev.ParentTaskID)
+			select {
+			case <-ctx.Done():
+				return // タイムアウトした場合は終了
+			default:
+				if getErr != nil {
+					errChan <- getErr
+				} else {
+					taskChan <- parentTask
+				}
+			}
+		}()
+		
+		// 15秒でタイムアウト
+		select {
+		case task = <-taskChan:
+			content = "\n\n## parent task\n" +
+				"Parent Task: " + task.Name + "\n" +
+				"Parent Status: " + string(task.Status) + "\n" +
+				"Parent Description: " + task.Description
+
+			_, err := writer.Write([]byte(content))
+			if err != nil {
+				return err
+			}
+		case err = <-errChan:
 			// 親タスクの取得に失敗した場合はログに記録するが、処理は継続
 			content = "\n\n## parent task\n" +
 				"Parent Task ID: " + *prev.ParentTaskID + "\n" +
@@ -338,18 +373,30 @@ func writeStdIn(writer *io.PipeWriter, task *api.Task, apiClient *api.Client) er
 				return err
 			}
 			break
-		} else {
+		case <-ctx.Done():
+			// タイムアウト
 			content = "\n\n## parent task\n" +
-				"Parent Task: " + task.Name + "\n" +
-				"Parent Status: " + string(task.Status) + "\n" +
-				"Parent Description: " + task.Description
+				"Parent Task ID: " + *prev.ParentTaskID + "\n" +
+				"(親タスクの詳細取得がタイムアウトしました)"
 
 			_, err := writer.Write([]byte(content))
 			if err != nil {
 				return err
 			}
+			break
+		}
+		depth++
+	}
+	
+	// 階層制限に達した場合の警告
+	if depth >= maxDepth && task.ParentTaskID != nil && *task.ParentTaskID != "" {
+		content = "\n\n(注意: 親タスクの階層が深すぎるため、これ以上の親タスク情報は省略されました)"
+		_, err := writer.Write([]byte(content))
+		if err != nil {
+			return err
 		}
 	}
+	
 	return nil
 }
 
