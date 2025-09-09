@@ -308,6 +308,12 @@ func executeTask(ctx context.Context, apiClient *api.Client, task *api.Task, par
 	return nil
 }
 func writeStdIn(writer *io.PipeWriter, task *api.Task, apiClient *api.Client) error {
+	defer func(writer *io.PipeWriter) {
+		err := writer.Close()
+		if err != nil {
+			panic(err)
+		}
+	}(writer)
 	content := "# " + task.Name + "\n" +
 		"## description\n" +
 		"" + task.Description
@@ -344,7 +350,6 @@ func writeStdIn(writer *io.PipeWriter, task *api.Task, apiClient *api.Client) er
 			}
 		}
 	}
-
 	return nil
 }
 
