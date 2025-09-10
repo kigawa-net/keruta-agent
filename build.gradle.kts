@@ -2,6 +2,7 @@ plugins {
     kotlin("jvm") version "1.9.10"
     application
     id("com.github.johnrengelman.shadow") version "8.1.1"
+    id("org.jlleitschuh.gradle.ktlint") version "11.6.1"
 }
 
 group = "net.kigawa"
