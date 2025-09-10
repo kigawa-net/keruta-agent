@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+      - develop
+      - beta
 
 jobs:
   auto-tag:
@@ -20,11 +22,34 @@ jobs:
         with:
           fetch-depth: 0  # Fetch all history and tags
 
-      - name: Get latest tag
+      - name: Get branch and latest tag
         id: get_latest_tag
         run: |
-          # Get the latest tag, or set v0.0.0 if no tags exist
-          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          # Get current branch name
+          BRANCH_NAME=${GITHUB_REF#refs/heads/}
+          echo "Branch name: $BRANCH_NAME"
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          
+          # Get the latest tag based on branch type
+          case $BRANCH_NAME in
+            "main")
+              # For main branch, get latest release tag (v*.*.*)
+              LATEST_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -n1 || echo "v0.0.0")
+              ;;
+            "develop")
+              # For develop branch, get latest dev tag (v*.*.*-dev.*)
+              LATEST_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$" | head -n1 || echo "v0.0.0-dev.0")
+              ;;
+            "beta")
+              # For beta branch, get latest beta tag (v*.*.*-beta.*)
+              LATEST_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$" | head -n1 || echo "v0.0.0-beta.0")
+              ;;
+            *)
+              echo "Unsupported branch: $BRANCH_NAME"
+              exit 1
+              ;;
+          esac
+          
           echo "Latest tag: $LATEST_TAG"
           echo "latest_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
 
@@ -33,18 +58,50 @@ jobs:
         run: |
           # Extract version components
           LATEST_TAG=${{ steps.get_latest_tag.outputs.latest_tag }}
+          BRANCH_NAME=${{ steps.get_latest_tag.outputs.branch_name }}
+          
+          echo "Latest tag: $LATEST_TAG"
+          echo "Branch name: $BRANCH_NAME"
 
-          # Remove 'v' prefix
-          VERSION=${LATEST_TAG#v}
-
-          # Split into major, minor, patch
-          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
-
-          # Increment patch version
-          PATCH=$((PATCH + 1))
-
-          # Create new version
-          NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
+          case $BRANCH_NAME in
+            "main")
+              # Remove 'v' prefix
+              VERSION=${LATEST_TAG#v}
+              # Split into major, minor, patch
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+              # Increment patch version
+              PATCH=$((PATCH + 1))
+              # Create new version
+              NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
+              ;;
+            "develop")
+              if [[ $LATEST_TAG == "v0.0.0-dev.0" ]]; then
+                # First dev tag
+                NEW_VERSION="v0.1.0-dev.1"
+              else
+                # Extract base version and dev number
+                BASE_VERSION=$(echo $LATEST_TAG | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-dev\.([0-9]+)$/\1/')
+                DEV_NUM=$(echo $LATEST_TAG | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-dev\.([0-9]+)$/\2/')
+                # Increment dev number
+                DEV_NUM=$((DEV_NUM + 1))
+                NEW_VERSION="v$BASE_VERSION-dev.$DEV_NUM"
+              fi
+              ;;
+            "beta")
+              if [[ $LATEST_TAG == "v0.0.0-beta.0" ]]; then
+                # First beta tag
+                NEW_VERSION="v0.1.0-beta.1"
+              else
+                # Extract base version and beta number
+                BASE_VERSION=$(echo $LATEST_TAG | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-beta\.([0-9]+)$/\1/')
+                BETA_NUM=$(echo $LATEST_TAG | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-beta\.([0-9]+)$/\2/')
+                # Increment beta number
+                BETA_NUM=$((BETA_NUM + 1))
+                NEW_VERSION="v$BASE_VERSION-beta.$BETA_NUM"
+              fi
+              ;;
+          esac
+          
           echo "New version: $NEW_VERSION"
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
