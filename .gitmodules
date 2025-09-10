@@ -1,0 +1,3 @@
+[submodule "keruta-doc"]
+	path = keruta-doc
+	url = https://github.com/kigawa-net/keruta-doc.git
