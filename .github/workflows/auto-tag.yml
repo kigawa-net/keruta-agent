@@ -38,11 +38,28 @@ jobs:
               ;;
             "develop")
               # For develop branch, get latest dev tag (v*.*.*-dev.*)
-              LATEST_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$" | head -n1 || echo "v0.0.0-dev.0")
+              # First get the latest main version to base dev version on
+              LATEST_MAIN_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -n1 || echo "v0.0.0")
+              LATEST_DEV_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+-dev\.[0-9]+$" | head -n1 || echo "")
+              
+              # If no dev tags exist, base on main version
+              if [[ -z "$LATEST_DEV_TAG" ]]; then
+                LATEST_TAG="$LATEST_MAIN_TAG"
+              else
+                LATEST_TAG="$LATEST_DEV_TAG"
+              fi
               ;;
             "beta")
               # For beta branch, get latest beta tag (v*.*.*-beta.*)
-              LATEST_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$" | head -n1 || echo "v0.0.0-beta.0")
+              LATEST_MAIN_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+$" | head -n1 || echo "v0.0.0")
+              LATEST_BETA_TAG=$(git tag --sort=-version:refname | grep -E "^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$" | head -n1 || echo "")
+              
+              # If no beta tags exist, base on main version
+              if [[ -z "$LATEST_BETA_TAG" ]]; then
+                LATEST_TAG="$LATEST_MAIN_TAG"
+              else
+                LATEST_TAG="$LATEST_BETA_TAG"
+              fi
               ;;
             *)
               echo "Unsupported branch: $BRANCH_NAME"
@@ -75,29 +92,43 @@ jobs:
               NEW_VERSION="v$MAJOR.$MINOR.$PATCH"
               ;;
             "develop")
-              if [[ $LATEST_TAG == "v0.0.0-dev.0" ]]; then
-                # First dev tag
-                NEW_VERSION="v0.1.0-dev.1"
-              else
-                # Extract base version and dev number
-                BASE_VERSION=$(echo $LATEST_TAG | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-dev\.([0-9]+)$/\1/')
-                DEV_NUM=$(echo $LATEST_TAG | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-dev\.([0-9]+)$/\2/')
-                # Increment dev number
+              if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-dev\.([0-9]+)$ ]]; then
+                # Existing dev tag - increment dev number
+                BASE_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+                DEV_NUM=${BASH_REMATCH[4]}
                 DEV_NUM=$((DEV_NUM + 1))
                 NEW_VERSION="v$BASE_VERSION-dev.$DEV_NUM"
+              elif [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                # Main branch tag - create first dev tag
+                MAJOR=${BASH_REMATCH[1]}
+                MINOR=${BASH_REMATCH[2]}
+                PATCH=${BASH_REMATCH[3]}
+                # Increment minor version for dev branch
+                MINOR=$((MINOR + 1))
+                NEW_VERSION="v$MAJOR.$MINOR.0-dev.1"
+              else
+                # Fallback to default dev tag
+                NEW_VERSION="v0.4.0-dev.1"
               fi
               ;;
             "beta")
-              if [[ $LATEST_TAG == "v0.0.0-beta.0" ]]; then
-                # First beta tag
-                NEW_VERSION="v0.1.0-beta.1"
-              else
-                # Extract base version and beta number
-                BASE_VERSION=$(echo $LATEST_TAG | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-beta\.([0-9]+)$/\1/')
-                BETA_NUM=$(echo $LATEST_TAG | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+)-beta\.([0-9]+)$/\2/')
-                # Increment beta number
+              if [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)-beta\.([0-9]+)$ ]]; then
+                # Existing beta tag - increment beta number
+                BASE_VERSION="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.${BASH_REMATCH[3]}"
+                BETA_NUM=${BASH_REMATCH[4]}
                 BETA_NUM=$((BETA_NUM + 1))
                 NEW_VERSION="v$BASE_VERSION-beta.$BETA_NUM"
+              elif [[ $LATEST_TAG =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+                # Main branch tag - create first beta tag
+                MAJOR=${BASH_REMATCH[1]}
+                MINOR=${BASH_REMATCH[2]}
+                PATCH=${BASH_REMATCH[3]}
+                # Increment minor version for beta branch
+                MINOR=$((MINOR + 1))
+                NEW_VERSION="v$MAJOR.$MINOR.0-beta.1"
+              else
+                # Fallback to default beta tag
+                NEW_VERSION="v0.4.0-beta.1"
               fi
               ;;
           esac
@@ -105,10 +136,31 @@ jobs:
           echo "New version: $NEW_VERSION"
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
+      - name: Clean up invalid tags
+        run: |
+          # Remove invalid tags that don't follow semver format
+          INVALID_TAGS=$(git tag -l | grep -E "^v-dev\.[0-9]+$" || true)
+          if [[ -n "$INVALID_TAGS" ]]; then
+            echo "Found invalid tags: $INVALID_TAGS"
+            for tag in $INVALID_TAGS; do
+              echo "Deleting invalid tag: $tag"
+              git tag -d $tag || true
+              git push origin :refs/tags/$tag || true
+            done
+          fi
+
       - name: Create and push tag
         id: create_tag
         run: |
           NEW_VERSION=${{ steps.bump_version.outputs.new_version }}
+          
+          # Check if tag already exists
+          if git rev-parse "refs/tags/$NEW_VERSION" >/dev/null 2>&1; then
+            echo "Tag $NEW_VERSION already exists, skipping tag creation"
+            echo "tag_name=$NEW_VERSION" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git tag -a $NEW_VERSION -m "Release $NEW_VERSION"
