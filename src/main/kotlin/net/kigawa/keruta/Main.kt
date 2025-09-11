@@ -12,10 +12,10 @@ fun main() {
     try {
         // 設定の初期化
         Config.init()
-        
+
         // ロガーの初期化
         Logger.init()
-        
+
         // ルートコマンドの実行
         execute()
     } catch (e: Exception) {
