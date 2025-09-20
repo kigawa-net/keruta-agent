@@ -60,7 +60,7 @@ func TestTmuxSessionManagement(t *testing.T) {
 
 func TestGetTmuxSessionStatus(t *testing.T) {
 	t.Skip("tmux機能はまだ実装されていません")
-	
+
 	// TODO: tmux機能が実装されたら以下のテストを有効にする
 	// testSessionName := "test-session-nonexistent"
 	// _, err := getTmuxSessionStatus(testSessionName)
